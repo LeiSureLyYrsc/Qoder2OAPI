@@ -51,10 +51,9 @@ curl http://127.0.0.1:8000/v1/chat/completions \
 
 ### 使用 Docker Compose
 
-1. 创建数据目录并启动服务。Linux 主机需要让容器内 UID `10001` 可写该目录：
+1. 创建数据目录并启动服务（容器启动时会自动处理 `./data` 的目录归属，以非 root 安全用户 `appuser` 运行；若宿主机挂载了特殊文件系统禁止 chown，可预先将该目录属主设为 UID/GID `10001`）：
    ```bash
    mkdir -p data
-   sudo chown -R 10001:10001 data
    docker compose up -d
    ```
 

@@ -30,7 +30,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-RUN groupadd --gid 10001 appgroup && \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gosu && \
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd --gid 10001 appgroup && \
     useradd --uid 10001 --gid appgroup --shell /usr/sbin/nologin --create-home appuser && \
     mkdir -p /app/data && \
     chown -R appuser:appgroup /app
@@ -38,11 +41,14 @@ RUN groupadd --gid 10001 appgroup && \
 # Copy virtual environment and app files from builder
 COPY --from=builder --chown=appuser:appgroup /app /app
 
-USER appuser
+# Copy docker-entrypoint.sh and ensure executable
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD python3 -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).getcode() == 200 else 1)"
 
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["qoder2oapi"]
