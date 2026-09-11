@@ -81,7 +81,7 @@ def create_app() -> FastAPI:
     async def admin_bootstrap():
         return {
             "needs_api_key": True,
-            "hint": "把启动日志或 data/api_key.txt 里的代理 API Key 粘贴到控制台。",
+            "hint": "把启动日志或 data/api_key.txt 里的本代理密钥粘贴到控制台。",
         }
 
     @app.get("/")

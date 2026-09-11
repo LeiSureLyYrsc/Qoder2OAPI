@@ -57,7 +57,7 @@ async function api(path, opts = {}) {
 // Format numbers with commas
 function formatNumber(num) {
   if (num === null || num === undefined || isNaN(num)) return '0';
-  return Number(num).toLocaleString('en-US');
+  return Number(num).toLocaleString('zh-CN');
 }
 
 // Format tokens (e.g. 200K, 1M, 32K)
@@ -77,7 +77,7 @@ function formatTokenCount(tokens) {
 
 // Format Unix Timestamp (ms or sec)
 function formatDate(timestamp) {
-  if (!timestamp || timestamp <= 0) return '永不 / 无';
+  if (!timestamp || timestamp <= 0) return '无';
   const ms = timestamp < 10000000000 ? timestamp * 1000 : timestamp;
   const d = new Date(ms);
   if (isNaN(d.getTime())) return '-';
@@ -87,9 +87,9 @@ function formatDate(timestamp) {
 
 // Mask key for safety
 function maskKey(key) {
-  if (!key) return 'sk-***';
+  if (!key) return '未设置';
   if (key.length <= 8) return '****';
-  return `${key.slice(0, 4)}...${key.slice(-4)}`;
+  return `${key.slice(0, 4)}…${key.slice(-4)}`;
 }
 
 // --- UI View Switching ---
@@ -125,10 +125,10 @@ async function checkAuthAndLoad() {
     loadModels();
   } catch (err) {
     if (err.message === 'UNAUTHORIZED') {
-      showToast('API Key 无效或已失效，请重新输入', 'error');
+      showToast('本代理密钥无效，请重新输入', 'error');
       showLockScreen();
     } else {
-      showToast(`连接代理服务失败: ${err.message}`, 'error');
+      showToast(`连不上本机代理: ${err.message}`, 'error');
       showDashboard(); // Allow viewing interface even if backend had transient error
     }
   }
@@ -167,7 +167,7 @@ function renderStatusSection() {
 
   if (total === 0) {
     authDot.className = 'dot dot-amber';
-    authText.textContent = '未登录';
+    authText.textContent = '还没有账号';
     loginBtn.textContent = '登录 Qoder';
   } else {
     authDot.className = usable > 0 ? 'dot dot-green' : 'dot dot-amber';
@@ -205,7 +205,7 @@ async function loadQuota() {
     renderQuotaBar('addon', data.add_on_quota);
 
     // 3. 汇总信息
-    document.getElementById('quota-user-type').textContent = data.user_type || '常规用户';
+    document.getElementById('quota-user-type').textContent = formatQuotaSource(data.user_type);
     document.getElementById('quota-expiry').textContent = formatDate(data.expires_at);
 
     const exceedChip = document.getElementById('quota-exceeded-chip');
@@ -220,8 +220,36 @@ async function loadQuota() {
     renderQuotaAccountLines(data.accounts || []);
   } catch (err) {
     if (err.message === 'UNAUTHORIZED') return;
-    showToast(`获取配额信息失败: ${err.message}`, 'error');
+    showToast(`获取额度失败: ${err.message}`, 'error');
   }
+}
+
+function formatQuotaSource(userType) {
+  const value = String(userType || '').trim();
+  if (!value || value === 'none') return '无账号';
+  if (value === 'pool') return '多账号合计';
+  if (value === 'personal_professional') return '个人专业版';
+  if (value === 'personal') return '个人版';
+  if (value === 'team') return '团队版';
+  if (value === 'unknown' || value === 'error') return '未知';
+  return value;
+}
+
+function formatAccountKind(kind) {
+  return kind === 'pat' ? '官网令牌' : '浏览器登录';
+}
+
+function formatThinkingLevel(level) {
+  const map = {
+    none: '关闭',
+    low: '低',
+    medium: '中',
+    high: '高',
+    xhigh: '很高',
+    max: '最大',
+  };
+  const key = String(level || '').toLowerCase();
+  return map[key] || level;
 }
 
 function accountRemaining(quota) {
@@ -245,7 +273,7 @@ function renderQuotaAccountLines(items) {
     let mark = '';
     if (flags.skip_quota) mark = ' · 额度耗尽';
     if (flags.skip_auth) mark += ' · 登录失效';
-    return `<div class="quota-account-line"><span>${label}</span><span class="tabular-nums">${formatNumber(rem)} credits${mark}</span></div>`;
+    return `<div class="quota-account-line"><span>${label}</span><span class="tabular-nums">${formatNumber(rem)} 积分${mark}</span></div>`;
   }).join('');
 }
 
@@ -266,7 +294,7 @@ function renderQuotaBar(prefix, quotaObj) {
   const total = Number(quotaObj.total || 0);
   const used = Number(quotaObj.used || 0);
   const remaining = Number(quotaObj.remaining !== undefined ? quotaObj.remaining : Math.max(0, total - used));
-  const unit = quotaObj.unit || 'credits';
+  const unit = quotaObj.unit === 'credits' || !quotaObj.unit ? '积分' : quotaObj.unit;
 
   const remainingPct = total > 0 ? Math.round((remaining / total) * 100) : 0;
 
@@ -301,7 +329,7 @@ async function loadModels() {
     tbody.innerHTML = '';
 
     if (models.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding: 24px; color: var(--text-dim);">暂无可用模型数据</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding: 24px; color: var(--text-dim);">还没有模型列表。加入账号后再点刷新。</td></tr>`;
       return;
     }
 
@@ -309,10 +337,11 @@ async function loadModels() {
       const tr = document.createElement('tr');
 
       // Thinking format
-      let thinkingDisplay = '无';
+      let thinkingDisplay = '不支持';
       if (m.thinking_levels && m.thinking_levels.length > 0) {
-        const def = m.default_thinking ? ` (默认: ${m.default_thinking})` : '';
-        thinkingDisplay = `${m.thinking_levels.join(', ')}${def}`;
+        const levels = m.thinking_levels.map(formatThinkingLevel).join(' / ');
+        const def = m.default_thinking ? `（默认 ${formatThinkingLevel(m.default_thinking)}）` : '';
+        thinkingDisplay = `${levels}${def}`;
       }
 
       // Capability Badges
@@ -335,7 +364,7 @@ async function loadModels() {
       tr.innerHTML = `
         <td>
           <div class="model-name">${m.display_name || m.public_id || m.key}</div>
-          <div class="model-key">${m.public_id || m.key}${m.public_id && m.key && m.public_id !== m.key ? ` · ${m.key}` : ''}</div>
+          <div class="model-key">${m.public_id || m.key}${m.public_id && m.key && m.public_id !== m.key ? ` · 内部 ${m.key}` : ''}</div>
         </td>
         <td>
           <span class="tabular-nums" style="font-size: 11.5px;">${thinkingDisplay}</span>
@@ -349,7 +378,7 @@ async function loadModels() {
     });
   } catch (err) {
     if (err.message === 'UNAUTHORIZED') return;
-    showToast(`获取模型目录失败: ${err.message}`, 'error');
+    showToast(`获取模型列表失败: ${err.message}`, 'error');
   }
 }
 
@@ -361,7 +390,7 @@ async function startLogin() {
 
   loginBtn.disabled = true;
   pollingChip.classList.remove('hidden');
-  pollingText.textContent = '正在创建授权通道...';
+  pollingText.textContent = '正在打开登录页…';
 
   try {
     const resp = await api('/api/admin/login/start', { method: 'POST' });
@@ -370,12 +399,12 @@ async function startLogin() {
 
     const { login_id, verification_uri } = data;
     if (!login_id || !verification_uri) {
-      throw new Error('授权服务未返回有效的验证地址');
+      throw new Error('没有拿到登录地址');
     }
 
     // Open browser authorization page in a new window
     window.open(verification_uri, '_blank');
-    showToast('已在新窗口打开授权页面，请在浏览器中完成登录', 'info');
+    showToast('已打开 Qoder 登录页，请在浏览器里完成授权', 'info');
 
     // Start polling
     state.pollStartTime = Date.now();
@@ -383,7 +412,7 @@ async function startLogin() {
   } catch (err) {
     stopPolling();
     loginBtn.disabled = false;
-    showToast(`发起登录失败: ${err.message}`, 'error');
+    showToast(`无法开始登录: ${err.message}`, 'error');
   }
 }
 
@@ -396,7 +425,7 @@ function pollOAuthStatus(loginId) {
   state.pollingTimer = setInterval(async () => {
     if (Date.now() - state.pollStartTime > 5 * 60 * 1000) {
       stopPolling();
-      showToast('授权已超时，请重新登录', 'error');
+      showToast('登录等待超时，请再点一次', 'error');
       return;
     }
 
@@ -408,19 +437,19 @@ function pollOAuthStatus(loginId) {
 
       if (data.status === 'ok') {
         stopPolling();
-        showToast('已登录 Qoder', 'success');
+        showToast('已加入账号', 'success');
         await checkAuthAndLoad();
       } else if (data.status === 'pending') {
         pollingText.textContent = '等待浏览器授权…';
       } else {
         stopPolling();
-        showToast(`授权失败: ${data.message || data.status}`, 'error');
+        showToast(`登录失败: ${data.message || data.status}`, 'error');
       }
     } catch (err) {
       consecutiveErrors += 1;
       if (consecutiveErrors >= 3) {
         stopPolling();
-        showToast(`授权轮询失败: ${err.message}`, 'error');
+        showToast(`查询登录状态失败: ${err.message}`, 'error');
       }
     }
   }, 2000);
@@ -437,7 +466,7 @@ async function loadAccounts() {
     state.accounts = accounts;
     countElem.textContent = `${accounts.length} 个账号`;
     if (!accounts.length) {
-      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 24px; color: var(--text-dim);">暂无账号</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 24px; color: var(--text-dim);">还没有账号。用右上角登录，或粘贴官网个人令牌。</td></tr>`;
       return;
     }
     tbody.innerHTML = '';
@@ -445,7 +474,7 @@ async function loadAccounts() {
       const tr = document.createElement('tr');
       const snap = acc.quota_snapshot || {};
       const rem = accountRemaining(snap);
-      const kind = acc.kind === 'pat' ? 'PAT' : 'OAuth';
+      const kind = formatAccountKind(acc.kind);
       const label = acc.email || acc.name || acc.user_id || acc.id;
       const enabledChecked = acc.enabled ? 'checked' : '';
       let flagsHtml = '';
@@ -457,7 +486,7 @@ async function loadAccounts() {
       }
       if (!flagsHtml) flagsHtml = `<span class="text-dim">无</span>`;
       const refreshBtn = acc.kind === 'pat'
-        ? `<button class="btn btn-sm" data-action="refresh" data-id="${acc.id}">刷新</button>`
+        ? `<button class="btn btn-sm" data-action="refresh" data-id="${acc.id}">刷新令牌</button>`
         : '';
       const err = acc.last_error
         ? `<div class="text-dim" style="font-size:11px;margin-top:4px;">${acc.last_error}</div>`
@@ -482,7 +511,7 @@ async function loadAccounts() {
     });
   } catch (err) {
     if (err.message === 'UNAUTHORIZED') return;
-    showToast(`获取账号列表失败: ${err.message}`, 'error');
+    showToast(`获取账号失败: ${err.message}`, 'error');
   }
 }
 
@@ -490,7 +519,7 @@ async function addPatAccount() {
   const input = document.getElementById('pat-input');
   const pat = (input.value || '').trim();
   if (!pat) {
-    showToast('请粘贴 PAT', 'error');
+    showToast('请粘贴官网个人令牌', 'error');
     return;
   }
   try {
@@ -503,10 +532,10 @@ async function addPatAccount() {
       throw new Error(data.detail || `HTTP ${resp.status}`);
     }
     input.value = '';
-    showToast('已添加 PAT 账号', 'success');
+    showToast('已添加官网令牌账号', 'success');
     await checkAuthAndLoad();
   } catch (err) {
-    showToast(`添加 PAT 失败: ${err.message}`, 'error');
+    showToast(`添加令牌失败: ${err.message}`, 'error');
   }
 }
 
@@ -536,10 +565,10 @@ async function onAccountsTableClick(ev) {
       const resp = await api(`/api/admin/accounts/${encodeURIComponent(id)}/refresh`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
-      showToast('已刷新 PAT', 'success');
+      showToast('已刷新官网令牌', 'success');
       await checkAuthAndLoad();
     } else if (action === 'delete') {
-      const ok = await askConfirm('删除后该账号不再参与轮询。', '删除账号');
+      const ok = await askConfirm('删除后这条账号不再参与转发。', '删除账号');
       if (!ok) return;
       const resp = await api(`/api/admin/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -579,18 +608,18 @@ function saveKeyFromModal() {
   const input = document.getElementById('key-modal-input');
   const val = (input.value || '').trim();
   if (!val) {
-    showToast('API Key 不能为空', 'error');
+    showToast('本代理密钥不能为空', 'error');
     return;
   }
   localStorage.setItem(STORAGE_KEY, val);
   state.apiKey = val;
   closeKeyModal();
-  showToast('API Key 已更新，正在验证...', 'info');
+  showToast('密钥已保存，正在验证…', 'info');
   checkAuthAndLoad();
 }
 
 async function handleRotateKey() {
-  const ok = await askConfirm('重新生成后，旧 Key 立刻失效，所有客户端都要改用新 Key。', '重新生成代理 Key');
+  const ok = await askConfirm('重新生成后，旧密钥立刻失效，所有客户端都要改用新密钥。', '重新生成本代理密钥');
   if (!ok) return;
 
   try {
@@ -605,7 +634,7 @@ async function handleRotateKey() {
     showRotateResultModal(newKey);
     checkAuthAndLoad();
   } catch (err) {
-    showToast(`轮转 Key 失败: ${err.message}`, 'error');
+    showToast(`重新生成密钥失败: ${err.message}`, 'error');
   }
 }
 
@@ -676,7 +705,7 @@ function setupEventListeners() {
   document.getElementById('lock-save-btn').addEventListener('click', () => {
     const val = (document.getElementById('lock-key-input').value || '').trim();
     if (!val) {
-      showToast('请输入代理 API Key', 'error');
+      showToast('请输入本代理密钥', 'error');
       return;
     }
     localStorage.setItem(STORAGE_KEY, val);
@@ -693,7 +722,7 @@ function setupEventListeners() {
   // Top actions
   document.getElementById('login-btn').addEventListener('click', startLogin);
   document.getElementById('refresh-all-btn').addEventListener('click', () => {
-    showToast('正在刷新状态与配额...', 'info');
+    showToast('正在刷新账号、额度和模型…', 'info');
     checkAuthAndLoad();
   });
 
@@ -706,7 +735,7 @@ function setupEventListeners() {
   document.getElementById('rotate-modal-close').addEventListener('click', closeRotateModal);
   document.getElementById('copy-rotated-key-btn').addEventListener('click', () => {
     const val = document.getElementById('rotated-key-value').value;
-    copyText(val, '已复制新 Key');
+    copyText(val, '已复制新密钥');
   });
 
   // Copy sample code
@@ -714,7 +743,7 @@ function setupEventListeners() {
     const s = state.status;
     const proxyHost = (s && s.proxy_host) || '127.0.0.1';
     const proxyPort = (s && s.proxy_port) || 8000;
-    const currentKey = localStorage.getItem(STORAGE_KEY) || 'YOUR_PROXY_KEY';
+    const currentKey = localStorage.getItem(STORAGE_KEY) || '<本代理密钥>';
     
     // Copy full valid curl command with the actual key
     const realCurl = `curl http://${proxyHost}:${proxyPort}/v1/chat/completions \\
@@ -724,13 +753,13 @@ function setupEventListeners() {
     "model": "auto",
     "messages": [{"role": "user", "content": "你好"}]
   }'`;
-    copyText(realCurl, '已复制 curl 命令');
+    copyText(realCurl, '已复制调用命令');
   });
 
   // Copy base URL
   document.getElementById('copy-endpoint-btn').addEventListener('click', () => {
     const endpoint = document.getElementById('proxy-endpoint').textContent;
-    copyText(endpoint, '代理端点已复制');
+    copyText(endpoint, '接口地址已复制');
   });
 
   document.getElementById('add-pat-btn').addEventListener('click', addPatAccount);

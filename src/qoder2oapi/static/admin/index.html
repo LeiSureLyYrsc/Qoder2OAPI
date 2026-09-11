@@ -15,25 +15,25 @@
         <div class="brand-icon">Q</div>
         <div class="brand-text">
           <h1>Qoder2OAPI 控制台</h1>
-          <div class="brand-sub">本地 OpenAI 兼容代理</div>
+          <div class="brand-sub">把 Qoder 中国区模型转成本地 OpenAI 接口</div>
         </div>
       </div>
 
       <div>
         <p style="margin-bottom: 12px; font-size: 13px; color: var(--text-muted);">
-          管理接口需要代理 API Key。把服务启动时打印的密钥，或 <code>data/api_key.txt</code> 里的内容粘贴到下面。
+          打开控制台需要本代理的密钥。把启动时打印的内容，或 <code>data/api_key.txt</code> 里的字符串贴到下面。
         </p>
         <div style="display: flex; flex-direction: column; gap: 8px;">
           <input 
             type="password" 
             id="lock-key-input" 
             class="input-control" 
-            placeholder="粘贴代理 API Key"
+            placeholder="粘贴本代理密钥"
             autocomplete="off"
             spellcheck="false"
           >
           <div class="field-hint">
-            启动日志里也会打印一次。这个 Key 只用于本代理，不是 Qoder 账号密码。
+            启动日志里也会打印一次。这是访问本机代理的密钥，不是 Qoder 登录密码，也不是官网个人令牌。
           </div>
         </div>
       </div>
@@ -55,7 +55,7 @@
             Qoder2OAPI
             <span class="brand-version">v0.1.0</span>
           </h1>
-          <div class="brand-sub">Qoder 中国区 → OpenAI 兼容接口</div>
+          <div class="brand-sub">把 Qoder 中国区模型转成本地 OpenAI 接口</div>
         </div>
       </div>
 
@@ -63,16 +63,16 @@
         <!-- Auth Status & OAuth Login trigger -->
         <div id="auth-status-chip" class="status-badge">
           <span id="auth-status-dot" class="dot dot-amber"></span>
-          <span id="auth-status-text">检测中...</span>
+          <span id="auth-status-text">检测中…</span>
         </div>
 
         <div id="polling-chip" class="status-badge hidden" style="border-color: var(--accent-primary); color: var(--accent-primary);">
           <span class="dot dot-blue pulse"></span>
-          <span id="polling-status-text">等待浏览器授权...</span>
+          <span id="polling-status-text">等待浏览器授权…</span>
         </div>
 
         <button id="login-btn" class="btn btn-primary">登录 Qoder</button>
-        <button id="refresh-all-btn" class="btn" title="刷新状态">刷新</button>
+        <button id="refresh-all-btn" class="btn" title="重新拉取账号、额度和模型">刷新</button>
       </div>
     </header>
 
@@ -83,7 +83,7 @@
         <div class="panel-header">
           <div class="panel-title">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-            额度（Credits）
+            号池额度
           </div>
           <div id="quota-exceeded-chip" class="status-badge">
             <span class="dot dot-green"></span> 正常
@@ -93,8 +93,8 @@
         <div class="panel-body">
           <!-- Empty / Not logged in state -->
           <div id="quota-empty-state" class="hidden" style="text-align: center; padding: 28px 12px; color: var(--text-dim);">
-            <p>号池为空，没有额度数据。</p>
-            <p style="margin-top: 6px; font-size: 12px;">用「登录 Qoder」或下方粘贴 PAT 添加账号。</p>
+            <p>还没有加入任何 Qoder 账号。</p>
+            <p style="margin-top: 6px; font-size: 12px;">点右上角登录，或在账号池里粘贴官网个人令牌。</p>
           </div>
 
           <!-- Quota Active Groups -->
@@ -102,14 +102,14 @@
             <!-- 1. 套餐额度 (user_quota) -->
             <div class="quota-item">
               <div class="quota-meta-row">
-                <span class="quota-label" id="quota-user-label">套餐额度</span>
-                <span class="quota-nums tabular-nums" id="quota-user-nums">计算中...</span>
+                <span class="quota-label" id="quota-user-label">套餐额度（合计）</span>
+                <span class="quota-nums tabular-nums" id="quota-user-nums">计算中…</span>
               </div>
               <div class="progress-track">
                 <div id="quota-user-bar" class="progress-fill progress-fill-teal" style="width: 0%;"></div>
               </div>
               <div class="quota-details-footer">
-                <span id="quota-user-unit">credits</span>
+                <span id="quota-user-unit">积分</span>
                 <span class="tabular-nums" id="quota-user-pct">0% 剩余</span>
               </div>
             </div>
@@ -117,14 +117,14 @@
             <!-- 2. 加量包额度 (add_on_quota) -->
             <div class="quota-item">
               <div class="quota-meta-row">
-                <span class="quota-label" id="quota-addon-label">加量包</span>
-                <span class="quota-nums tabular-nums" id="quota-addon-nums">计算中...</span>
+                <span class="quota-label" id="quota-addon-label">加量包（合计）</span>
+                <span class="quota-nums tabular-nums" id="quota-addon-nums">计算中…</span>
               </div>
               <div class="progress-track">
                 <div id="quota-addon-bar" class="progress-fill progress-fill-teal" style="width: 0%;"></div>
               </div>
               <div class="quota-details-footer">
-                <span id="quota-addon-unit">credits</span>
+                <span id="quota-addon-unit">积分</span>
                 <span class="tabular-nums" id="quota-addon-pct">0% 剩余</span>
               </div>
             </div>
@@ -132,11 +132,11 @@
             <!-- Quota Meta Summary -->
             <div class="quota-summary-strip">
               <div class="stat-box">
-                <div class="stat-label">账号类型</div>
+                <div class="stat-label">额度来源</div>
                 <div class="stat-val" id="quota-user-type">-</div>
               </div>
               <div class="stat-box">
-                <div class="stat-label">套餐到期</div>
+                <div class="stat-label">额度到期</div>
                 <div class="stat-val tabular-nums" id="quota-expiry">-</div>
               </div>
             </div>
@@ -153,14 +153,14 @@
             接入信息
           </div>
           <div class="topbar-actions">
-            <button id="change-key-btn" class="btn btn-sm">更换 Key</button>
-            <button id="rotate-key-btn" class="btn btn-sm">重新生成 Key</button>
+            <button id="change-key-btn" class="btn btn-sm">更换密钥</button>
+            <button id="rotate-key-btn" class="btn btn-sm">重新生成密钥</button>
           </div>
         </div>
 
         <div class="panel-body">
           <div class="info-row">
-            <span class="info-label">OpenAI Base URL</span>
+            <span class="info-label">接口地址</span>
             <span class="info-value">
               <span id="proxy-endpoint">http://127.0.0.1:8000/v1</span>
               <button id="copy-endpoint-btn" class="btn btn-sm">复制</button>
@@ -168,21 +168,21 @@
           </div>
 
           <div class="info-row">
-            <span class="info-label">代理 API Key</span>
+            <span class="info-label">本代理密钥</span>
             <span class="info-value">
-              <span id="current-key-display">sk-***</span>
+              <span id="current-key-display">未设置</span>
             </span>
           </div>
 
           <div class="info-row">
-            <span class="info-label">号池</span>
+            <span class="info-label">账号</span>
             <span class="info-value" id="pool-summary">0 可用 / 共 0</span>
           </div>
 
           <!-- Code Snippet -->
           <div style="margin-top: 10px;">
             <div style="display: flex; align-items: center; justify-content: space-between;">
-              <span class="field-hint">调用示例：</span>
+              <span class="field-hint">给 OpenAI 兼容客户端用的示例：</span>
             </div>
             <div class="code-preview">
               <button id="copy-sample-code-btn" class="btn btn-sm copy-btn">复制调用示例</button>
@@ -204,14 +204,14 @@
             type="password"
             id="pat-input"
             class="input-control"
-            placeholder="粘贴 Qoder PAT（pt-...）"
+            placeholder="粘贴官网个人令牌（一般以 pt- 开头）"
             autocomplete="off"
             spellcheck="false"
           >
-          <button id="add-pat-btn" class="btn btn-primary">添加 PAT</button>
+          <button id="add-pat-btn" class="btn btn-primary">添加令牌</button>
         </div>
         <p class="field-hint" style="margin-top: 8px;">
-          在 <code>qoder.com.cn/account/integrations</code> 创建 Personal Access Token。这不是本代理的 API Key。
+          在 <a href="https://qoder.com.cn/account/integrations" target="_blank" rel="noopener">qoder.com.cn/account/integrations</a> 创建个人令牌。这是 Qoder 官网令牌，不是上面的本代理密钥。
         </p>
       </div>
       <div class="panel-body" style="padding: 0;">
@@ -221,8 +221,8 @@
               <tr>
                 <th>类型</th>
                 <th>账号</th>
-                <th>剩余 credits</th>
-                <th>到期</th>
+                <th>剩余积分</th>
+                <th>登录到期</th>
                 <th>启用</th>
                 <th>标记</th>
                 <th>操作</th>
@@ -231,7 +231,7 @@
             <tbody id="accounts-table-body">
               <tr>
                 <td colspan="7" style="text-align: center; padding: 24px; color: var(--text-dim);">
-                  暂无账号
+                  还没有账号。用右上角登录，或粘贴官网个人令牌。
                 </td>
               </tr>
             </tbody>
@@ -257,7 +257,7 @@
           <table class="data-table">
             <thead>
               <tr>
-                <th style="min-width: 200px;">模型名称 / Key</th>
+                <th style="min-width: 200px;">对外名称</th>
                 <th style="min-width: 140px;">思考强度</th>
                 <th style="min-width: 90px;">上下文</th>
                 <th style="min-width: 90px;">最大输出</th>
@@ -268,7 +268,7 @@
             <tbody id="models-table-body">
               <tr>
                 <td colspan="6" style="text-align: center; padding: 24px; color: var(--text-dim);">
-                  正在加载模型配置...
+                  正在加载模型列表…
                 </td>
               </tr>
             </tbody>
@@ -277,13 +277,13 @@
       </div>
 
       <div style="padding: 10px 16px; background: var(--bg-card-subtle); border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-dim);">
-        默认使用每个模型支持的最大思考强度和最大上下文。请求里带 <code>reasoning_effort</code> 或 <code>extra_body.context_length</code> 时可覆盖。
+        调用时默认用每个模型的最大思考和最大上下文。请求里写 <code>reasoning_effort</code> 或 <code>context_length</code> 可以改小。对外模型名如 <code>deepseek-v4-pro</code>，不要用内部代号。
       </div>
     </section>
 
     <!-- Footer Note -->
     <footer class="footer-note">
-      本机代理 · 不经过 qodercn CLI
+      本机代理 · 直连 Qoder 中国区，不经过官方命令行
     </footer>
   </div>
 
@@ -291,15 +291,15 @@
   <div id="key-modal" class="modal-overlay hidden">
     <div class="modal-dialog">
       <div class="modal-header">
-        <h2>更换代理 API Key</h2>
+        <h2>更换本代理密钥</h2>
       </div>
       <div class="modal-body">
-        <p class="field-hint">只改浏览器里保存的密钥，用来访问本控制台和 <code>/v1</code> 接口。</p>
+        <p class="field-hint">只改浏览器里保存的本代理密钥，用来打开控制台和调用 <code>/v1</code>。不会改 Qoder 账号。</p>
         <input 
           type="text" 
           id="key-modal-input" 
           class="input-control" 
-          placeholder="粘贴新的 API Key"
+          placeholder="粘贴本代理密钥"
           autocomplete="off"
         >
       </div>
@@ -314,11 +314,11 @@
   <div id="rotate-modal" class="modal-overlay hidden">
     <div class="modal-dialog">
       <div class="modal-header">
-        <h2>已生成新的 API Key</h2>
+        <h2>已生成新的本代理密钥</h2>
       </div>
       <div class="modal-body">
         <p class="field-hint">
-          新 Key 已写入 <code>data/api_key.txt</code>，旧 Key 立刻失效。请复制保存：
+          新密钥已写入 <code>data/api_key.txt</code>，旧密钥立刻失效。请复制保存，并更新所有客户端：
         </p>
         <input 
           type="text" 
