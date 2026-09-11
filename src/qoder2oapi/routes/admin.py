@@ -1,12 +1,12 @@
 from typing import Any
 import secrets
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from qoder2oapi.auth_proxy import verify_api_key
 from qoder2oapi.catalog import catalog_manager
 from qoder2oapi.config import api_key_file, settings
-from qoder2oapi.models import AccountRecord
 from qoder2oapi.names import public_id_for_key, public_name_for_key
 from qoder2oapi.oauth import poll_device_flow, start_device_flow
 from qoder2oapi.pool import pool
@@ -29,6 +29,11 @@ class UpdateAccountRequest(BaseModel):
     enabled: bool | None = None
     skip_quota: bool | None = None
     skip_auth: bool | None = None
+
+
+class ImportAccountsRequest(BaseModel):
+    mode: str = Field(default="merge")
+    accounts: list[dict[str, Any]] | None = None
 
 
 @router.post("/login/start")
@@ -68,6 +73,27 @@ async def admin_status() -> dict[str, Any]:
 async def list_accounts() -> dict[str, Any]:
     accounts = token_store.list_accounts()
     return {"accounts": [acc.public_dump() for acc in accounts]}
+
+
+@router.get("/accounts/export")
+async def export_accounts() -> JSONResponse:
+    payload = token_store.export_payload()
+    return JSONResponse(
+        content=payload,
+        headers={
+            "Content-Disposition": "attachment; filename=qoder2oapi-accounts.json",
+        },
+    )
+
+
+@router.post("/accounts/import")
+async def import_accounts(body: ImportAccountsRequest) -> dict[str, Any]:
+    mode = (body.mode or "merge").strip().lower()
+    if mode not in ("merge", "replace"):
+        raise HTTPException(status_code=400, detail="mode 只能是 merge 或 replace")
+    raw: Any = {"accounts": body.accounts or []}
+    result = token_store.import_accounts(raw, mode=mode)
+    return {"status": "ok", **result}
 
 
 @router.post("/accounts/pat")

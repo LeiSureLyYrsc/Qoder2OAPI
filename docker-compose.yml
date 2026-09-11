@@ -1,0 +1,21 @@
+services:
+  qoder2oapi:
+    image: ghcr.io/leisurelyyrsc/qoder2oapi:latest
+    container_name: qoder2oapi
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - QODER2OAPI_HOST=0.0.0.0
+      - QODER2OAPI_PORT=8000
+      - QODER2OAPI_DATA_DIR=/app/data
+      # 可选：显式配置代理 API Key，若留空则首次启动自动生成并写入 ./data/api_key.txt
+      # - QODER2OAPI_API_KEY=your_custom_proxy_key
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).getcode() == 200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3

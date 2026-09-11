@@ -36,7 +36,7 @@ async def test_with_api_key_models_mock(test_client):
         data = resp.json()
         assert data["object"] == "list"
         ids = [m["id"] for m in data["data"]]
-        assert ids == ["deepseek-v4-pro", "qwen3.7-max", "auto"]
+        assert ids == ["cn/deepseek-v4-pro", "cn/qwen3.7-max", "cn/auto"]
         assert "dmodel" not in ids
 
 
@@ -62,4 +62,72 @@ async def test_post_completions_no_usable_account_401(test_client):
         )
         assert resp.status_code == 401
         assert "No usable Qoder account" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_admin_export_import_and_clear_flags(test_client):
+    from qoder2oapi.models import AccountRecord
+    import qoder2oapi.token_store as ts_mod
+
+    ts_mod.token_store.clear()
+    ts_mod.token_store.upsert(
+        AccountRecord(
+            id="acc-1",
+            kind="oauth",
+            access_token="secret-token",
+            user_id="user-1",
+            machine_id="m-1",
+            skip_quota=True,
+            last_error="quota",
+        )
+    )
+    headers = {"Authorization": f"Bearer {settings.qoder2oapi_api_key}"}
+    async with test_client as client:
+        listed = await client.get("/api/admin/accounts", headers=headers)
+        assert listed.status_code == 200
+        assert listed.json()["accounts"][0]["access_token"] == "***"
+
+        exported = await client.get("/api/admin/accounts/export", headers=headers)
+        assert exported.status_code == 200
+        assert "qoder2oapi-accounts.json" in exported.headers.get("content-disposition", "")
+        payload = exported.json()
+        assert payload["accounts"][0]["access_token"] == "secret-token"
+
+        patched = await client.patch(
+            "/api/admin/accounts/acc-1",
+            headers=headers,
+            json={"skip_quota": False, "skip_auth": False},
+        )
+        assert patched.status_code == 200
+        assert patched.json()["account"]["skip_quota"] is False
+        cleared = ts_mod.token_store.get("acc-1")
+        assert cleared is not None
+        assert cleared.last_error == ""
+
+        imported = await client.post(
+            "/api/admin/accounts/import",
+            headers=headers,
+            json={
+                "mode": "merge",
+                "accounts": [
+                    {
+                        "kind": "oauth",
+                        "access_token": "secret-2",
+                        "user_id": "user-2",
+                        "machine_id": "m-2",
+                    }
+                ],
+            },
+        )
+        assert imported.status_code == 200
+        body = imported.json()
+        assert body["imported"] == 1
+        assert body["total"] == 2
+
+        bad_mode = await client.post(
+            "/api/admin/accounts/import",
+            headers=headers,
+            json={"mode": "wipe", "accounts": []},
+        )
+        assert bad_mode.status_code == 400
 

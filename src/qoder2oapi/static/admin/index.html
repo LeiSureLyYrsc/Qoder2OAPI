@@ -196,7 +196,12 @@
     <section class="panel">
       <div class="panel-header">
         <div class="panel-title">账号池</div>
-        <span id="accounts-count" class="brand-version">0 个账号</span>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span id="accounts-count" class="brand-version">0 个账号</span>
+          <button id="export-accounts-btn" class="btn btn-sm" title="导出账号池配置文件（含凭证）">导出 JSON</button>
+          <button id="import-accounts-btn" class="btn btn-sm" title="从 JSON 文件导入账号">导入 JSON</button>
+          <input type="file" id="accounts-import-file" class="hidden" accept=".json,application/json">
+        </div>
       </div>
       <div class="panel-body">
         <div class="pat-add-row">
@@ -212,6 +217,9 @@
         </div>
         <p class="field-hint" style="margin-top: 8px;">
           在 <a href="https://qoder.com.cn/account/integrations" target="_blank" rel="noopener">qoder.com.cn/account/integrations</a> 创建个人令牌。这是 Qoder 官网令牌，不是上面的本代理密钥。
+        </p>
+        <p class="field-hint" style="margin-top: 6px;">
+          额度耗尽或登录失效会自动跳过该号；点标记或「清除标记」后重新进入轮询。账号保存在项目 <code>data/accounts.json</code>。导出文件含登录凭证，不要发到公开地方。
         </p>
       </div>
       <div class="panel-body" style="padding: 0;">
@@ -277,7 +285,7 @@
       </div>
 
       <div style="padding: 10px 16px; background: var(--bg-card-subtle); border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-dim);">
-        调用时默认用每个模型的最大思考和最大上下文。请求里写 <code>reasoning_effort</code> 或 <code>context_length</code> 可以改小。对外模型名如 <code>deepseek-v4-pro</code>，不要用内部代号。
+        调用时默认用每个模型的最大思考和最大上下文。请求里写 <code>reasoning_effort</code> 或 <code>context_length</code> 可以改小。对外模型名带 <code>cn/</code> 前缀，如 <code>cn/deepseek-v4-pro</code>。
       </div>
     </section>
 
@@ -346,6 +354,28 @@
       <div class="modal-footer">
         <button id="confirm-cancel" class="btn">取消</button>
         <button id="confirm-ok" class="btn btn-danger">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Import Accounts Mode Choice -->
+  <div id="import-modal" class="modal-overlay hidden">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2>导入账号池</h2>
+      </div>
+      <div class="modal-body">
+        <p id="import-modal-summary" class="field-hint" style="color: var(--text-main); font-weight: 500;"></p>
+        <p class="field-hint">
+          请选择导入方式：<br>
+          • <strong>合并</strong>：同账号覆盖，新账号追加，保留池内其他账号<br>
+          • <strong>替换</strong>：清空当前账号池，只保留导入文件中的账号
+        </p>
+      </div>
+      <div class="modal-footer import-modal-footer">
+        <button id="import-cancel-btn" class="btn">取消</button>
+        <button id="import-merge-btn" class="btn btn-primary">合并导入</button>
+        <button id="import-replace-btn" class="btn btn-danger">清空并替换</button>
       </div>
     </div>
   </div>

@@ -270,10 +270,20 @@ function renderQuotaAccountLines(items) {
     const label = item.email || item.name || item.user_id || item.id;
     const rem = accountRemaining(item.quota);
     const flags = item.flags || {};
-    let mark = '';
-    if (flags.skip_quota) mark = ' · 额度耗尽';
-    if (flags.skip_auth) mark += ' · 登录失效';
-    return `<div class="quota-account-line"><span>${label}</span><span class="tabular-nums">${formatNumber(rem)} 积分${mark}</span></div>`;
+    let chips = '';
+    if (flags.skip_quota) {
+      chips += `<button class="flag-chip active-warn" data-action="clear-flags" data-id="${item.id}" title="点此恢复进入轮询">额度耗尽（点此恢复）</button>`;
+    }
+    if (flags.skip_auth) {
+      chips += `<button class="flag-chip active-rose" data-action="clear-flags" data-id="${item.id}" title="点此恢复进入轮询">登录失效（点此恢复）</button>`;
+    }
+    return `<div class="quota-account-line">
+      <span>${label}</span>
+      <span class="tabular-nums" style="display: flex; align-items: center; gap: 6px;">
+        ${formatNumber(rem)} 积分
+        ${chips}
+      </span>
+    </div>`;
   }).join('');
 }
 
@@ -479,15 +489,18 @@ async function loadAccounts() {
       const enabledChecked = acc.enabled ? 'checked' : '';
       let flagsHtml = '';
       if (acc.skip_quota) {
-        flagsHtml += `<button class="flag-chip active-warn" data-action="clear-flags" data-id="${acc.id}">额度耗尽</button>`;
+        flagsHtml += `<button class="flag-chip active-warn" data-action="clear-flags" data-id="${acc.id}" title="点此恢复进入轮询">额度耗尽（点此恢复）</button>`;
       }
       if (acc.skip_auth) {
-        flagsHtml += `<button class="flag-chip active-rose" data-action="clear-flags" data-id="${acc.id}">登录失效</button>`;
+        flagsHtml += `<button class="flag-chip active-rose" data-action="clear-flags" data-id="${acc.id}" title="点此恢复进入轮询">登录失效（点此恢复）</button>`;
       }
-      if (!flagsHtml) flagsHtml = `<span class="text-dim">无</span>`;
+      if (!flagsHtml) {
+        flagsHtml = `<button class="flag-chip" data-action="clear-flags" data-id="${acc.id}" title="当前无标记，点此重置">无标记</button>`;
+      }
       const refreshBtn = acc.kind === 'pat'
         ? `<button class="btn btn-sm" data-action="refresh" data-id="${acc.id}">刷新令牌</button>`
         : '';
+      const clearFlagsBtn = `<button class="btn btn-sm" data-action="clear-flags" data-id="${acc.id}" title="清除该账号的跳过标记与错误记录">清除标记</button>`;
       const err = acc.last_error
         ? `<div class="text-dim" style="font-size:11px;margin-top:4px;">${acc.last_error}</div>`
         : '';
@@ -503,6 +516,7 @@ async function loadAccounts() {
         <td><input type="checkbox" data-action="toggle-enabled" data-id="${acc.id}" ${enabledChecked}></td>
         <td>${flagsHtml}</td>
         <td class="accounts-actions">
+          ${clearFlagsBtn}
           ${refreshBtn}
           <button class="btn btn-sm btn-danger" data-action="delete" data-id="${acc.id}">删除</button>
         </td>
@@ -539,13 +553,113 @@ async function addPatAccount() {
   }
 }
 
-async function patchAccount(id, body) {
-  const resp = await api(`/api/admin/accounts/${encodeURIComponent(id)}`, {
-    method: 'PATCH',
-    body: JSON.stringify(body),
+async function onQuotaAccountLinesClick(ev) {
+  const btn = ev.target.closest('[data-action="clear-flags"]');
+  if (!btn) return;
+  const id = btn.getAttribute('data-id');
+  if (!id) return;
+  try {
+    await patchAccount(id, { skip_quota: false, skip_auth: false });
+    showToast('已清除标记，账号重新进入轮询', 'success');
+    await checkAuthAndLoad();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+// --- Account Pool Export & Import ---
+async function exportAccounts() {
+  try {
+    const resp = await api('/api/admin/accounts/export');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'qoder2oapi-accounts.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('已导出账号池文件（含登录凭证，请妥善保管）', 'info', 5000);
+  } catch (err) {
+    showToast(`导出失败: ${err.message}`, 'error');
+  }
+}
+
+function promptImportMode(accountsCount) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('import-modal');
+    const summary = document.getElementById('import-modal-summary');
+    const mergeBtn = document.getElementById('import-merge-btn');
+    const replaceBtn = document.getElementById('import-replace-btn');
+    const cancelBtn = document.getElementById('import-cancel-btn');
+
+    summary.textContent = `文件包含 ${accountsCount} 个账号。`;
+    modal.classList.remove('hidden');
+
+    const finish = (choice) => {
+      modal.classList.add('hidden');
+      mergeBtn.removeEventListener('click', onMerge);
+      replaceBtn.removeEventListener('click', onReplace);
+      cancelBtn.removeEventListener('click', onCancel);
+      resolve(choice);
+    };
+
+    const onMerge = () => finish('merge');
+    const onReplace = () => finish('replace');
+    const onCancel = () => finish(null);
+
+    mergeBtn.addEventListener('click', onMerge);
+    replaceBtn.addEventListener('click', onReplace);
+    cancelBtn.addEventListener('click', onCancel);
   });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+}
+
+async function handleImportFile(file) {
+  if (!file) return;
+  try {
+    const text = await file.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (parseErr) {
+      throw new Error('文件不是合法的 JSON 格式');
+    }
+
+    let accounts = [];
+    if (Array.isArray(data)) {
+      accounts = data;
+    } else if (data && Array.isArray(data.accounts)) {
+      accounts = data.accounts;
+    } else {
+      throw new Error('未在 JSON 中找到 accounts 数组');
+    }
+
+    if (!accounts.length) {
+      showToast('导入文件中没有包含任何账号', 'error');
+      return;
+    }
+
+    const mode = await promptImportMode(accounts.length);
+    if (!mode) return;
+
+    const resp = await api('/api/admin/accounts/import', {
+      method: 'POST',
+      body: JSON.stringify({ mode, accounts }),
+    });
+
+    const res = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(res.detail || `HTTP ${resp.status}`);
+    }
+
+    const msg = `导入完成：新增 ${res.imported ?? 0}，更新 ${res.updated ?? 0}，跳过 ${res.skipped ?? 0}，池内共 ${res.total ?? 0} 个`;
+    showToast(msg, 'success', 5000);
+    await checkAuthAndLoad();
+  } catch (err) {
+    showToast(`导入失败: ${err.message}`, 'error');
+  }
 }
 
 async function onAccountsTableClick(ev) {
@@ -556,7 +670,7 @@ async function onAccountsTableClick(ev) {
   try {
     if (action === 'clear-flags') {
       await patchAccount(id, { skip_quota: false, skip_auth: false });
-      showToast('已清除标记', 'success');
+      showToast('已清除标记，账号重新进入轮询', 'success');
       await checkAuthAndLoad();
     } else if (action === 'toggle-enabled') {
       await patchAccount(id, { enabled: btn.checked });
@@ -768,6 +882,33 @@ function setupEventListeners() {
   });
   document.getElementById('accounts-table-body').addEventListener('click', onAccountsTableClick);
   document.getElementById('accounts-table-body').addEventListener('change', onAccountsTableClick);
+
+  // Quota lines flag clicks
+  const quotaLinesEl = document.getElementById('quota-account-lines');
+  if (quotaLinesEl) {
+    quotaLinesEl.addEventListener('click', onQuotaAccountLinesClick);
+  }
+
+  // Export and Import
+  const exportBtn = document.getElementById('export-accounts-btn');
+  if (exportBtn) {
+    exportBtn.addEventListener('click', exportAccounts);
+  }
+
+  const importBtn = document.getElementById('import-accounts-btn');
+  const importFileInput = document.getElementById('accounts-import-file');
+  if (importBtn && importFileInput) {
+    importBtn.addEventListener('click', () => {
+      importFileInput.value = '';
+      importFileInput.click();
+    });
+    importFileInput.addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (file) {
+        handleImportFile(file);
+      }
+    });
+  }
 }
 
 // Initial Boot

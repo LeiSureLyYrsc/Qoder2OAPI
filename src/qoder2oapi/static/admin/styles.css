@@ -763,16 +763,46 @@ body {
   cursor: pointer;
   background: var(--bg-card-subtle);
   color: var(--text-muted);
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.flag-chip:hover {
+  background: var(--bg-card-hover);
+  border-color: #334155;
+  color: var(--text-main);
 }
 
 .flag-chip.active-warn {
   border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.1);
   color: var(--accent-amber);
+}
+
+.flag-chip.active-warn:hover {
+  border-color: rgba(245, 158, 11, 0.7);
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
 }
 
 .flag-chip.active-rose {
   border-color: rgba(244, 63, 94, 0.4);
+  background: rgba(244, 63, 94, 0.1);
   color: var(--accent-rose);
+}
+
+.flag-chip.active-rose:hover {
+  border-color: rgba(244, 63, 94, 0.7);
+  background: rgba(244, 63, 94, 0.18);
+  color: #fda4af;
+}
+
+.import-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .footer-note {

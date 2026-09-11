@@ -1,0 +1,43 @@
+# Git and CI metadata
+.git
+.github
+.gitignore
+.gitattributes
+.ignore
+
+# Python, uv, tests, and build output
+.venv
+venv
+env
+__pycache__
+*.py[cod]
+*$py.class
+*.egg-info
+dist
+build
+.pytest_cache
+.coverage
+htmlcov
+tests
+
+# Local environment and credentials
+.env
+.env.*
+*.env
+*.pem
+*.key
+
+# Runtime persistence must be mounted, never baked into the image
+data
+*.bin
+accounts.json
+api_key.txt
+
+# Editor and temporary files
+.DS_Store
+Thumbs.db
+.vscode
+.idea
+.slim
+*.tmp
+*.log

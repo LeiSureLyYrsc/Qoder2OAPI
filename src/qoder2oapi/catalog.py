@@ -7,7 +7,7 @@ from typing import Any
 from qoder2oapi.constants import MODEL_LIST_ALGO_URL, MODEL_LIST_URL
 from qoder2oapi.cosy import build_cosy_headers
 from qoder2oapi.http import get_http_client
-from qoder2oapi.names import alias_to_internal_key
+from qoder2oapi.names import catalog_key_candidates
 from qoder2oapi.token_store import token_store
 
 _THINKING_ORDER = ["none", "low", "medium", "high", "xhigh", "max"]
@@ -20,11 +20,11 @@ class CatalogManager:
         self.last_updated: float = 0.0
 
     def get_model(self, key: str) -> dict[str, Any] | None:
-        internal = alias_to_internal_key(key)
-        found = self.models_by_key.get(internal)
-        if found:
-            return found
-        return self.models_by_key.get(key)
+        for candidate in catalog_key_candidates(key):
+            found = self.models_by_key.get(candidate)
+            if found:
+                return found
+        return None
 
     def extract_context_tiers(self, model_data: dict[str, Any]) -> list[dict[str, Any]]:
         seen: dict[int, dict[str, Any]] = {}
@@ -50,6 +50,8 @@ class CatalogManager:
             model_data.get("contextConfig"),
             model_data.get("context_windows"),
             model_data.get("contextWindows"),
+            model_data.get("available_context_windows"),
+            model_data.get("availableContextWindows"),
             (model_data.get("model_config") or {}).get("context_config")
             if isinstance(model_data.get("model_config"), dict)
             else None,
@@ -69,12 +71,20 @@ class CatalogManager:
             "contextLength",
             "context_window",
             "contextWindow",
+            "default_context_window",
+            "defaultContextWindow",
         ):
             add_tier(_parse_token_count(model_data.get(field)))
 
         nested = model_data.get("model_config")
         if isinstance(nested, dict):
-            for field in ("max_input_tokens", "maxInputTokens", "context_length", "context_window"):
+            for field in (
+                "max_input_tokens",
+                "maxInputTokens",
+                "context_length",
+                "context_window",
+                "default_context_window",
+            ):
                 add_tier(_parse_token_count(nested.get(field)))
 
         return sorted(seen.values(), key=lambda x: x["token_count"])
@@ -83,7 +93,7 @@ class CatalogManager:
         tiers = self.extract_context_tiers(model_data)
         if tiers:
             return tiers[-1]["token_count"]
-        return 32768
+        return int(model_data.get("max_input_tokens") or model_data.get("maxInputTokens") or 0) or 32768
 
     def get_min_context_length(self, model_data: dict[str, Any]) -> int:
         tiers = self.extract_context_tiers(model_data)
@@ -106,16 +116,29 @@ class CatalogManager:
         )
 
     def determine_thinking_levels(self, model_data: dict[str, Any]) -> list[str]:
-        model_config = model_data.get("model_config") or model_data.get("modelConfig") or {}
-        for k in ["thinking_levels", "reasoning_effort", "thinking", "reasoning", "effort"]:
-            val = model_config.get(k)
-            if isinstance(val, list):
-                levels = [str(x).lower() for x in val if str(x).lower() in _THINKING_ORDER]
+        sources = [
+            model_data,
+            model_data.get("thinking_config") or model_data.get("thinkingConfig") or {},
+            model_data.get("model_config") or model_data.get("modelConfig") or {},
+        ]
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            for k in (
+                "thinking_levels",
+                "supported_efforts",
+                "reasoning_efforts",
+                "reasoning_effort_levels",
+                "efforts",
+                "reasoning_effort",
+                "thinking",
+                "reasoning",
+                "effort",
+            ):
+                levels = _normalize_thinking_levels(source.get(k))
                 if levels:
-                    levels.sort(key=lambda x: _THINKING_ORDER.index(x))
                     return levels
-        is_reasoning = bool(model_data.get("is_reasoning") or model_data.get("isReasoning"))
-        if is_reasoning:
+        if bool(model_data.get("is_reasoning") or model_data.get("isReasoning")):
             return ["low", "medium", "high"]
         return []
 
@@ -123,6 +146,18 @@ class CatalogManager:
         levels = self.determine_thinking_levels(model_data)
         if not levels:
             return None
+        for source in (
+            model_data,
+            model_data.get("thinking_config") or {},
+            model_data.get("thinkingConfig") or {},
+            model_data.get("model_config") or {},
+        ):
+            if not isinstance(source, dict):
+                continue
+            for field in ("default_effort", "defaultEffort", "default_thinking"):
+                val = str(source.get(field) or "").lower()
+                if val in levels:
+                    return val
         return levels[-1]
 
     async def fetch_models(self) -> list[dict[str, Any]]:
@@ -236,6 +271,22 @@ def _tier_is_default(item: Any) -> bool:
     return bool(item.get("isDefault") or item.get("is_default") or item.get("default", False))
 
 
+def _normalize_thinking_levels(value: Any) -> list[str]:
+    found: list[str] = []
+    if isinstance(value, list):
+        candidates = value
+    elif isinstance(value, dict):
+        candidates = list(value.keys())
+    else:
+        return []
+    for item in candidates:
+        name = str(item).lower()
+        if name in _THINKING_ORDER and name not in found:
+            found.append(name)
+    found.sort(key=lambda x: _THINKING_ORDER.index(x))
+    return found
+
+
 def _format_token_label(token_count: int) -> str:
     if token_count >= 1_000_000 and token_count % 1_000_000 == 0:
         return f"{token_count // 1_000_000}M"
@@ -244,18 +295,87 @@ def _format_token_label(token_count: int) -> str:
     return str(token_count)
 
 
+_CONTEXT_LIST_KEYS = ("tiers", "windows", "options", "values", "items")
+_CONTEXT_META_KEYS = {
+    "token_count",
+    "tokenCount",
+    "max_input_tokens",
+    "maxInputTokens",
+    "context_length",
+    "contextLength",
+    "context_window",
+    "contextWindow",
+    "tokens",
+    "value",
+    "is_default",
+    "isDefault",
+    "default",
+    "name",
+    "label",
+    "display_name",
+    "displayName",
+    "key",
+    "id",
+}
+
+
 def _iter_context_entries(source: Any) -> list[Any]:
     if source is None:
         return []
     if isinstance(source, list):
-        return list(source)
+        entries: list[Any] = []
+        for item in source:
+            entries.extend(_iter_context_entries(item))
+        return entries
     if isinstance(source, dict):
-        for field in ("tiers", "windows", "options", "values", "items"):
+        for field in _CONTEXT_LIST_KEYS:
             nested = source.get(field)
             if isinstance(nested, list):
-                return list(nested)
+                return _iter_context_entries(nested)
+        mapped = _entries_from_keyed_windows(source)
+        if mapped:
+            return mapped
         return [source]
-    return [_parse_token_count(source)]
+    return [source]
+
+
+def _entries_from_keyed_windows(source: dict[str, Any]) -> list[Any]:
+    if "token_count" in source or "tokenCount" in source:
+        return []
+    entries: list[Any] = []
+    for key, value in source.items():
+        if key in _CONTEXT_LIST_KEYS or key in _CONTEXT_META_KEYS:
+            continue
+        if isinstance(value, dict):
+            parsed = _parse_token_count(value)
+            if parsed:
+                item = dict(value)
+                item.setdefault("name", str(key))
+                entries.append(item)
+        else:
+            parsed = _parse_token_count(value)
+            if parsed:
+                entries.append({"name": str(key), "token_count": parsed})
+    return entries
+
+
+def _models_from_list(items: Any) -> list[dict[str, Any]]:
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict) and item.get("key")]
+
+
+def _models_from_scene_map(data: dict[str, Any]) -> list[dict[str, Any]]:
+    preferred = ("chat", "default")
+    for name in preferred:
+        found = _models_from_list(data.get(name))
+        if found:
+            return found
+    merged: dict[str, dict[str, Any]] = {}
+    for value in data.values():
+        for item in _models_from_list(value):
+            merged[str(item.get("key"))] = item
+    return list(merged.values())
 
 
 def _extract_chat_list(data: Any) -> list[dict[str, Any]]:
@@ -270,14 +390,14 @@ def _extract_chat_list(data: Any) -> list[dict[str, Any]]:
         except Exception:
             body = None
     if isinstance(body, dict):
-        chat = body.get("chat")
-        if isinstance(chat, list):
-            return [item for item in chat if isinstance(item, dict)]
+        found = _models_from_scene_map(body)
+        if found:
+            return found
     if isinstance(body, list):
         return [item for item in body if isinstance(item, dict)]
-    chat = data.get("chat")
-    if isinstance(chat, list):
-        return [item for item in chat if isinstance(item, dict)]
+    found = _models_from_scene_map(data)
+    if found:
+        return found
     return []
 
 

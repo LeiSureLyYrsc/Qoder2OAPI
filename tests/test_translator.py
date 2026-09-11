@@ -134,6 +134,45 @@ def test_tools_and_tool_role_passed():
     assert payload["chat_context"]["extra"]["modelConfig"]["key"] == "gpt-4o"
 
 
+def test_keyed_context_config_uses_largest_window():
+    model = {
+        "key": "auto",
+        "max_input_tokens": 180000,
+        "context_config": {
+            "128k": {"token_count": 128000, "is_default": False},
+            "180k": {"token_count": 180000, "is_default": True},
+        },
+        "available_context_windows": [128000, 180000],
+        "thinking_config": {
+            "supported_efforts": ["low", "medium", "high"],
+            "default_effort": "medium",
+        },
+        "is_reasoning": True,
+    }
+    assert catalog_manager.get_max_context_length(model) == 180000
+    assert catalog_manager.get_min_context_length(model) == 128000
+    assert catalog_manager.determine_thinking_levels(model) == ["low", "medium", "high"]
+    assert catalog_manager.get_default_thinking(model) == "medium"
+
+
+def test_scene_map_catalog_and_missing_max_input():
+    data = {
+        "default": [
+            {
+                "key": "lite",
+                "display_name": "lite",
+                "context_config": {
+                    "200k": {"token_count": 200000, "is_default": True},
+                },
+            }
+        ],
+        "byok_enterprise": [],
+    }
+    chat = _extract_chat_list(data)
+    assert chat[0]["key"] == "lite"
+    assert catalog_manager.get_max_context_length(chat[0]) == 200000
+
+
 def test_extract_chat_list_from_string_envelope():
     data = {
         "statusCodeValue": 200,

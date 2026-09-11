@@ -60,6 +60,8 @@ class AccountPool:
             acc.skip_quota = skip_quota
         if skip_auth is not None:
             acc.skip_auth = skip_auth
+        if skip_quota is False and skip_auth is False:
+            acc.last_error = ""
         return token_store.upsert(acc)
 
     def counts(self) -> dict[str, int]:
