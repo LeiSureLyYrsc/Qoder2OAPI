@@ -334,8 +334,8 @@ async function loadModels() {
 
       tr.innerHTML = `
         <td>
-          <div class="model-name">${m.display_name || m.key}</div>
-          <div class="model-key">${m.key}</div>
+          <div class="model-name">${m.display_name || m.public_id || m.key}</div>
+          <div class="model-key">${m.public_id || m.key}${m.public_id && m.key && m.public_id !== m.key ? ` · ${m.key}` : ''}</div>
         </td>
         <td>
           <span class="tabular-nums" style="font-size: 11.5px;">${thinkingDisplay}</span>

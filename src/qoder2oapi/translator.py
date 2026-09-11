@@ -18,6 +18,19 @@ def _part_as_dict(part: Any) -> dict[str, Any] | None:
     return None
 
 
+def _requested_context_length(request: ChatCompletionRequest) -> int | None:
+    extras: dict[str, Any] = {}
+    if isinstance(request.extra_body, dict):
+        extras.update(request.extra_body)
+    dumped = request.model_dump(exclude_unset=True)
+    extras.update(dumped)
+    for field in ("context_length", "max_input_tokens", "context_window"):
+        raw = extras.get(field)
+        if isinstance(raw, (int, float)) and raw > 0:
+            return int(raw)
+    return None
+
+
 def _flatten_content(content: str | list[Any] | None) -> str | list[Any]:
     if content is None:
         return ""
@@ -47,7 +60,7 @@ def translate_openai_to_qoder(
     request: ChatCompletionRequest,
     user_id: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    requested_key = request.model.removeprefix("qoder/")
+    requested_key = request.model
     model_data = catalog_manager.get_model(requested_key)
     if not model_data:
         raise HTTPException(
@@ -103,10 +116,13 @@ def translate_openai_to_qoder(
     req_max = request.max_tokens or request.max_completion_tokens
     chosen_max_tokens = min(req_max, max_output) if req_max else max_output
 
-    max_context = catalog_manager.get_max_context_length(model_data)
+    requested_context = _requested_context_length(request)
+    max_context = catalog_manager.resolve_context_length(model_data, requested_context)
 
     model_config_override = catalog_manager.prepare_model_config(
-        model_data, override_reasoning_effort=chosen_effort
+        model_data,
+        override_reasoning_effort=chosen_effort,
+        context_length=max_context,
     )
 
     parameters: dict[str, Any] = {

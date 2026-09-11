@@ -40,7 +40,9 @@ curl http://127.0.0.1:8000/v1/chat/completions \
 - `GET /v1/dashboard/billing/usage`（credits，不是美元）
 - `GET /v1/dashboard/billing/subscription`
 
-未指定时，每个模型使用其最大思考强度和最大上下文；请求里的 `reasoning_effort` / `max_tokens` 可覆盖。
+`GET /v1/models` 返回公开名（如 `deepseek-v4-pro`、`qwen3.7-max`），内部 key（`dmodel` 等）仍可调用。
+
+未指定时，每个模型使用其最大思考强度和最大上下文。可用 `reasoning_effort`、`max_tokens`，或 `extra_body.context_length` 覆盖窗口。
 
 ## 环境变量
 

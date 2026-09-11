@@ -1,11 +1,13 @@
 from copy import deepcopy
 import json
+import re
 import time
 from typing import Any
 
 from qoder2oapi.constants import MODEL_LIST_ALGO_URL, MODEL_LIST_URL
 from qoder2oapi.cosy import build_cosy_headers
 from qoder2oapi.http import get_http_client
+from qoder2oapi.names import alias_to_internal_key
 from qoder2oapi.token_store import token_store
 
 _THINKING_ORDER = ["none", "low", "medium", "high", "xhigh", "max"]
@@ -18,58 +20,83 @@ class CatalogManager:
         self.last_updated: float = 0.0
 
     def get_model(self, key: str) -> dict[str, Any] | None:
-        clean_key = key.removeprefix("qoder/")
-        return self.models_by_key.get(clean_key)
+        internal = alias_to_internal_key(key)
+        found = self.models_by_key.get(internal)
+        if found:
+            return found
+        return self.models_by_key.get(key)
 
     def extract_context_tiers(self, model_data: dict[str, Any]) -> list[dict[str, Any]]:
-        context_config = model_data.get("context_config") or model_data.get("contextConfig") or []
-        tiers = []
-        if isinstance(context_config, list):
-            for item in context_config:
-                if not isinstance(item, dict):
-                    continue
-                token_count = (
-                    item.get("tokenCount")
-                    or item.get("token_count")
-                    or item.get("max_input_tokens")
-                    or item.get("maxInputTokens")
-                    or item.get("contextLength")
-                    or item.get("context_length")
-                    or 0
+        seen: dict[int, dict[str, Any]] = {}
+
+        def add_tier(token_count: int, name: str = "", is_default: bool = False, raw: Any = None) -> None:
+            if token_count <= 0:
+                return
+            existing = seen.get(token_count)
+            if existing:
+                existing["is_default"] = existing["is_default"] or is_default
+                if name and not existing["name"]:
+                    existing["name"] = name
+                return
+            seen[token_count] = {
+                "token_count": token_count,
+                "name": name or _format_token_label(token_count),
+                "is_default": is_default,
+                "raw": raw if isinstance(raw, dict) else {},
+            }
+
+        for source in (
+            model_data.get("context_config"),
+            model_data.get("contextConfig"),
+            model_data.get("context_windows"),
+            model_data.get("contextWindows"),
+            (model_data.get("model_config") or {}).get("context_config")
+            if isinstance(model_data.get("model_config"), dict)
+            else None,
+        ):
+            for item in _iter_context_entries(source):
+                add_tier(
+                    _parse_token_count(item),
+                    _tier_name(item),
+                    _tier_is_default(item),
+                    item,
                 )
-                name = (
-                    item.get("name")
-                    or item.get("label")
-                    or item.get("display_name")
-                    or item.get("displayName")
-                    or item.get("key")
-                    or item.get("id")
-                    or str(token_count)
-                )
-                is_default = bool(
-                    item.get("isDefault") or item.get("is_default") or item.get("default", False)
-                )
-                tiers.append(
-                    {
-                        "token_count": int(token_count),
-                        "name": str(name),
-                        "is_default": is_default,
-                        "raw": item,
-                    }
-                )
-        tiers.sort(key=lambda x: x["token_count"])
-        return tiers
+
+        for field in (
+            "max_input_tokens",
+            "maxInputTokens",
+            "context_length",
+            "contextLength",
+            "context_window",
+            "contextWindow",
+        ):
+            add_tier(_parse_token_count(model_data.get(field)))
+
+        nested = model_data.get("model_config")
+        if isinstance(nested, dict):
+            for field in ("max_input_tokens", "maxInputTokens", "context_length", "context_window"):
+                add_tier(_parse_token_count(nested.get(field)))
+
+        return sorted(seen.values(), key=lambda x: x["token_count"])
 
     def get_max_context_length(self, model_data: dict[str, Any]) -> int:
         tiers = self.extract_context_tiers(model_data)
         if tiers:
             return tiers[-1]["token_count"]
-        return int(
-            model_data.get("max_input_tokens")
-            or model_data.get("maxInputTokens")
-            or model_data.get("context_length")
-            or 32768
-        )
+        return 32768
+
+    def get_min_context_length(self, model_data: dict[str, Any]) -> int:
+        tiers = self.extract_context_tiers(model_data)
+        if tiers:
+            return tiers[0]["token_count"]
+        return self.get_max_context_length(model_data)
+
+    def resolve_context_length(self, model_data: dict[str, Any], requested: int | None = None) -> int:
+        max_ctx = self.get_max_context_length(model_data)
+        min_ctx = self.get_min_context_length(model_data)
+        if requested is None or requested <= 0:
+            return max_ctx
+        return max(min_ctx, min(int(requested), max_ctx))
 
     def get_max_output_tokens(self, model_data: dict[str, Any]) -> int:
         return int(
@@ -140,17 +167,95 @@ class CatalogManager:
         self,
         base_model_data: dict[str, Any],
         override_reasoning_effort: str | None = None,
+        context_length: int | None = None,
     ) -> dict[str, Any]:
         config_copy = deepcopy(base_model_data)
         config_copy["key"] = base_model_data.get("key") or config_copy.get("key")
-        max_context = self.get_max_context_length(base_model_data)
-        config_copy["max_input_tokens"] = max_context
-        config_copy["context_length"] = max_context
+        chosen_context = self.resolve_context_length(base_model_data, context_length)
+        config_copy["max_input_tokens"] = chosen_context
+        config_copy["context_length"] = chosen_context
+        config_copy["context_window"] = chosen_context
 
         effort = override_reasoning_effort or self.get_default_thinking(base_model_data)
         if effort:
             config_copy["reasoning_effort"] = effort
         return config_copy
+
+
+def _parse_token_count(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)) and value > 0:
+        return int(value)
+    if isinstance(value, dict):
+        for field in (
+            "tokenCount",
+            "token_count",
+            "max_input_tokens",
+            "maxInputTokens",
+            "contextLength",
+            "context_length",
+            "contextWindow",
+            "context_window",
+            "tokens",
+            "value",
+        ):
+            parsed = _parse_token_count(value.get(field))
+            if parsed:
+                return parsed
+        return 0
+    if isinstance(value, str):
+        text = value.strip().replace(",", "")
+        match = re.match(r"^(\d+(?:\.\d+)?)\s*([kKmM])?$", text)
+        if not match:
+            digits = re.search(r"(\d+)", text)
+            return int(digits.group(1)) if digits else 0
+        number = float(match.group(1))
+        suffix = (match.group(2) or "").lower()
+        if suffix == "k":
+            number *= 1000
+        elif suffix == "m":
+            number *= 1_000_000
+        return int(number)
+    return 0
+
+
+def _tier_name(item: Any) -> str:
+    if not isinstance(item, dict):
+        return ""
+    for field in ("name", "label", "display_name", "displayName", "key", "id"):
+        val = item.get(field)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return ""
+
+
+def _tier_is_default(item: Any) -> bool:
+    if not isinstance(item, dict):
+        return False
+    return bool(item.get("isDefault") or item.get("is_default") or item.get("default", False))
+
+
+def _format_token_label(token_count: int) -> str:
+    if token_count >= 1_000_000 and token_count % 1_000_000 == 0:
+        return f"{token_count // 1_000_000}M"
+    if token_count >= 1000 and token_count % 1000 == 0:
+        return f"{token_count // 1000}K"
+    return str(token_count)
+
+
+def _iter_context_entries(source: Any) -> list[Any]:
+    if source is None:
+        return []
+    if isinstance(source, list):
+        return list(source)
+    if isinstance(source, dict):
+        for field in ("tiers", "windows", "options", "values", "items"):
+            nested = source.get(field)
+            if isinstance(nested, list):
+                return list(nested)
+        return [source]
+    return [_parse_token_count(source)]
 
 
 def _extract_chat_list(data: Any) -> list[dict[str, Any]]:

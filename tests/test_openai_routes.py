@@ -21,8 +21,13 @@ async def test_missing_api_key_401(test_client):
 
 @pytest.mark.asyncio
 async def test_with_api_key_models_mock(test_client):
+    catalog_manager.raw_models = [
+        {"key": "dmodel", "display_name": "dmodel"},
+        {"key": "qmodel_latest", "display_name": "qmodel_latest"},
+        {"key": "auto", "display_name": "Auto"},
+    ]
     catalog_manager.models_by_key = {
-        "gpt-4o": {"key": "gpt-4o", "display_name": "GPT-4o"},
+        item["key"]: item for item in catalog_manager.raw_models
     }
     async with test_client as client:
         headers = {"Authorization": f"Bearer {settings.qoder2oapi_api_key}"}
@@ -31,7 +36,8 @@ async def test_with_api_key_models_mock(test_client):
         data = resp.json()
         assert data["object"] == "list"
         ids = [m["id"] for m in data["data"]]
-        assert "gpt-4o" in ids
+        assert ids == ["deepseek-v4-pro", "qwen3.7-max", "auto"]
+        assert "dmodel" not in ids
 
 
 @pytest.mark.asyncio

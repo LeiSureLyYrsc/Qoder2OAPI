@@ -1,5 +1,5 @@
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatMessagePart(BaseModel):
@@ -28,6 +28,8 @@ class ChatMessage(BaseModel):
 
 
 class ChatCompletionRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     model: str
     messages: list[ChatMessage]
     temperature: float | None = None
@@ -45,13 +47,17 @@ class ChatCompletionRequest(BaseModel):
     tool_choice: str | dict[str, Any] | None = None
     reasoning_effort: str | None = None
     reasoning: dict[str, Any] | None = None
+    extra_body: dict[str, Any] | None = None
+    context_length: int | None = None
+    max_input_tokens: int | None = None
+    context_window: int | None = None
 
 
 class ModelCard(BaseModel):
     id: str
     object: str = "model"
     created: int = 1700000000
-    owned_by: str = "qoder"
+    owned_by: str = "qoder-cn"
 
 
 class ModelListResponse(BaseModel):

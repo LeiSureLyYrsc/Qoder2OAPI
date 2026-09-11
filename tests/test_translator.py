@@ -33,6 +33,19 @@ def setup_catalog():
                 "source": "openai",
             },
         },
+        "dmodel": {
+            "key": "dmodel",
+            "display_name": "dmodel",
+            "is_reasoning": True,
+            "max_input_tokens": 180000,
+            "max_output_tokens": 32768,
+            "context_config": {
+                "tiers": [
+                    {"name": "180k", "token_count": 180000, "isDefault": True},
+                    {"label": "1M", "max_input_tokens": "1M"},
+                ]
+            },
+        },
     }
 
 
@@ -128,3 +141,32 @@ def test_extract_chat_list_from_string_envelope():
     }
     chat = _extract_chat_list(data)
     assert chat[0]["key"] == "auto"
+
+
+def test_nested_context_config_defaults_to_max_tier():
+    req = ChatCompletionRequest(
+        model="deepseek-v4-pro",
+        messages=[ChatMessage(role="user", content="hi")],
+    )
+    payload, _ = translate_openai_to_qoder(req, user_id="user_123")
+    assert payload["parameters"]["context_length"] == 1000000
+    assert payload["model_config"]["max_input_tokens"] == 1000000
+    assert payload["chat_context"]["extra"]["modelConfig"]["key"] == "dmodel"
+
+
+def test_client_context_length_override_clamped():
+    req = ChatCompletionRequest(
+        model="dmodel",
+        messages=[ChatMessage(role="user", content="hi")],
+        extra_body={"context_length": 200000},
+    )
+    payload, _ = translate_openai_to_qoder(req, user_id="user_123")
+    assert payload["parameters"]["context_length"] == 200000
+
+    too_small = ChatCompletionRequest(
+        model="dmodel",
+        messages=[ChatMessage(role="user", content="hi")],
+        extra_body={"context_length": 1000},
+    )
+    payload_small, _ = translate_openai_to_qoder(too_small, user_id="user_123")
+    assert payload_small["parameters"]["context_length"] == 180000

@@ -5,6 +5,7 @@ from qoder2oapi.auth_proxy import verify_api_key
 from qoder2oapi.catalog import catalog_manager
 from qoder2oapi.infer import execute_infer
 from qoder2oapi.models import ChatCompletionRequest, ModelCard, ModelListResponse
+from qoder2oapi.names import public_id_for_key
 from qoder2oapi.pool import pool
 from qoder2oapi.quota import fetch_quota
 from qoder2oapi.token_store import token_store
@@ -16,19 +17,20 @@ router = APIRouter(prefix="/v1", dependencies=[Depends(verify_api_key)])
 @router.get("/models", response_model=ModelListResponse)
 async def list_models() -> ModelListResponse:
     raw_models = await catalog_manager.fetch_models()
-    if not raw_models:
-        cards = [
-            ModelCard(id=k)
-            for k in catalog_manager.models_by_key.keys()
-        ]
-        return ModelListResponse(data=cards)
-
+    source = raw_models or [
+        {"key": k} for k in catalog_manager.models_by_key.keys()
+    ]
     cards = []
-    for m in raw_models:
-        key = m.get("key")
-        if key:
-            cards.append(ModelCard(id=key))
-            cards.append(ModelCard(id=f"qoder/{key}"))
+    seen: set[str] = set()
+    for m in source:
+        key = m.get("key") if isinstance(m, dict) else None
+        if not key:
+            continue
+        public_id = public_id_for_key(str(key))
+        if public_id in seen:
+            continue
+        seen.add(public_id)
+        cards.append(ModelCard(id=public_id, owned_by="qoder-cn"))
     return ModelListResponse(data=cards)
 
 
@@ -42,8 +44,7 @@ async def chat_completions(request: ChatCompletionRequest):
             raise HTTPException(status_code=429, detail="No usable Qoder account: all accounts exceeded quota.")
         raise HTTPException(status_code=401, detail="No usable Qoder account. Please log in.")
 
-    model_key = request.model.removeprefix("qoder/")
-    if not catalog_manager.get_model(model_key):
+    if not catalog_manager.get_model(request.model):
         await catalog_manager.fetch_models()
 
     user_id = usable_accounts[0].user_id or "pool"

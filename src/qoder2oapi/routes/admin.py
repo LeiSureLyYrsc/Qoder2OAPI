@@ -7,6 +7,7 @@ from qoder2oapi.auth_proxy import verify_api_key
 from qoder2oapi.catalog import catalog_manager
 from qoder2oapi.config import api_key_file, settings
 from qoder2oapi.models import AccountRecord
+from qoder2oapi.names import public_id_for_key, public_name_for_key
 from qoder2oapi.oauth import poll_device_flow, start_device_flow
 from qoder2oapi.pool import pool
 from qoder2oapi.quota import fetch_quota
@@ -131,13 +132,16 @@ async def admin_models() -> dict[str, Any]:
         if not isinstance(item, dict) or not item.get("key"):
             continue
         thinking = catalog_manager.determine_thinking_levels(item)
+        key = str(item.get("key"))
         cards.append(
             {
-                "key": item.get("key"),
-                "display_name": item.get("display_name") or item.get("key"),
+                "key": key,
+                "public_id": public_id_for_key(key),
+                "display_name": public_name_for_key(key, item.get("display_name") or key),
                 "is_reasoning": bool(item.get("is_reasoning")),
                 "is_vl": bool(item.get("is_vl")),
                 "max_input_tokens": catalog_manager.get_max_context_length(item),
+                "min_input_tokens": catalog_manager.get_min_context_length(item),
                 "max_output_tokens": catalog_manager.get_max_output_tokens(item),
                 "thinking_levels": thinking,
                 "default_thinking": catalog_manager.get_default_thinking(item),
