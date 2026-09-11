@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "qoder2oapi"
+version = "0.1.0"
+description = "FastAPI proxy for Qoder CN exposing OpenAI Chat Completions"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "httpx>=0.27.0",
+    "cryptography>=43.0.0",
+    "pydantic-settings>=2.4.0",
+    "python-multipart>=0.0.9",
+]
+
+[project.scripts]
+qoder2oapi = "qoder2oapi.app:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+

@@ -1,0 +1,83 @@
+import pytest
+import httpx
+from qoder2oapi.oauth import poll_device_flow, start_device_flow
+from qoder2oapi.token_store import token_store
+
+
+@pytest.mark.asyncio
+async def test_oauth_pending_202(monkeypatch):
+    flow = start_device_flow()
+    login_id = flow["login_id"]
+
+    class MockPendingResp:
+        status_code = 202
+        text = "pending"
+
+        def json(self):
+            return {}
+
+    async def mock_get(*args, **kwargs):
+        return MockPendingResp()
+
+    from qoder2oapi import oauth
+    mock_client = type("MockClient", (), {"get": mock_get})()
+    monkeypatch.setattr(oauth, "get_http_client", lambda: mock_client)
+
+    res = await poll_device_flow(login_id)
+    assert res["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_oauth_success_200_parse(monkeypatch):
+    flow = start_device_flow()
+    login_id = flow["login_id"]
+
+    class MockSuccessResp:
+        status_code = 200
+
+        def json(self):
+            return {
+                "code": 0,
+                "data": {
+                    "token": "test-access-token",
+                    "refresh_token": "test-refresh-token",
+                    "user_id": "u_999",
+                    "expires_in": 3600,
+                },
+            }
+
+    class MockUserInfoResp:
+        status_code = 200
+
+        def json(self):
+            return {
+                "data": {
+                    "nickname": "TestUser",
+                    "email": "test@domain.com",
+                }
+            }
+
+    class MockClient:
+        async def get(self, url, *args, **kwargs):
+            if "poll" in str(url):
+                return MockSuccessResp()
+            return MockUserInfoResp()
+
+    from qoder2oapi import oauth
+    mock_client = MockClient()
+    monkeypatch.setattr(oauth, "get_http_client", lambda: mock_client)
+
+    res = await poll_device_flow(login_id)
+    assert res.get("status") == "ok", f"poll failed with: {res}"
+    assert res["user"]["access_token"] == "***"
+    assert res["user"]["user_id"] == "u_999"
+    assert res["user"]["name"] == "TestUser"
+    assert res["user"]["email"] == "test@domain.com"
+
+    saved = oauth.token_store.load_token()
+    assert saved is not None
+    assert saved.access_token == "test-access-token"
+    assert saved.user_id == "u_999"
+    accounts = oauth.token_store.list_accounts()
+    assert len(accounts) == 1
+    assert accounts[0].kind == "oauth"

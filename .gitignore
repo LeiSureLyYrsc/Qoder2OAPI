@@ -1,0 +1,10 @@
+.slim/deepwork/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+data/
+.env
+.python-version

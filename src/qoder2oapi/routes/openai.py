@@ -1,0 +1,87 @@
+from typing import Any
+from fastapi import APIRouter, Depends, HTTPException
+
+from qoder2oapi.auth_proxy import verify_api_key
+from qoder2oapi.catalog import catalog_manager
+from qoder2oapi.infer import execute_infer
+from qoder2oapi.models import ChatCompletionRequest, ModelCard, ModelListResponse
+from qoder2oapi.pool import pool
+from qoder2oapi.quota import fetch_quota
+from qoder2oapi.token_store import token_store
+from qoder2oapi.translator import translate_openai_to_qoder
+
+router = APIRouter(prefix="/v1", dependencies=[Depends(verify_api_key)])
+
+
+@router.get("/models", response_model=ModelListResponse)
+async def list_models() -> ModelListResponse:
+    raw_models = await catalog_manager.fetch_models()
+    if not raw_models:
+        cards = [
+            ModelCard(id=k)
+            for k in catalog_manager.models_by_key.keys()
+        ]
+        return ModelListResponse(data=cards)
+
+    cards = []
+    for m in raw_models:
+        key = m.get("key")
+        if key:
+            cards.append(ModelCard(id=key))
+            cards.append(ModelCard(id=f"qoder/{key}"))
+    return ModelListResponse(data=cards)
+
+
+@router.post("/chat/completions")
+async def chat_completions(request: ChatCompletionRequest):
+    usable_accounts = pool.peek_usable()
+    if not usable_accounts:
+        # Check if all accounts are only skipped for quota
+        all_accounts = token_store.list_accounts()
+        if all_accounts and all(acc.skip_quota and not acc.skip_auth for acc in all_accounts):
+            raise HTTPException(status_code=429, detail="No usable Qoder account: all accounts exceeded quota.")
+        raise HTTPException(status_code=401, detail="No usable Qoder account. Please log in.")
+
+    model_key = request.model.removeprefix("qoder/")
+    if not catalog_manager.get_model(model_key):
+        await catalog_manager.fetch_models()
+
+    user_id = usable_accounts[0].user_id or "pool"
+    payload, model_data = translate_openai_to_qoder(request, user_id=user_id)
+    is_stream = bool(request.stream)
+    return await execute_infer(payload, model_data, stream=is_stream)
+
+
+@router.get("/dashboard/billing/usage")
+async def billing_usage() -> dict[str, Any]:
+    quota = await fetch_quota()
+    return {
+        "object": "list",
+        "total_usage": quota.get("total_usage", 0.0),
+        "daily_costs": [],
+    }
+
+
+@router.get("/dashboard/billing/subscription")
+async def billing_subscription() -> dict[str, Any]:
+    quota = await fetch_quota()
+    expires_at = quota.get("expires_at", 0)
+    access_until = int(expires_at / 1000) if expires_at else 0
+    return {
+        "object": "billing_subscription",
+        "has_payment_method": True,
+        "canceled": False,
+        "canceled_at": None,
+        "delinquent": None,
+        "access_until": access_until,
+        "soft_limit": quota.get("hard_limit", 0.0),
+        "hard_limit": quota.get("hard_limit", 0.0),
+        "system_hard_limit": quota.get("hard_limit", 0.0),
+        "soft_limit_usd": quota.get("hard_limit", 0.0),
+        "hard_limit_usd": quota.get("hard_limit", 0.0),
+        "system_hard_limit_usd": quota.get("hard_limit", 0.0),
+        "plan": {
+            "title": quota.get("user_type", "personal"),
+            "id": quota.get("user_type", "personal"),
+        },
+    }

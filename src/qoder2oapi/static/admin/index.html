@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Qoder2OAPI 控制台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+  <!-- Lock Screen View (Bootstrap / Enter Key) -->
+  <div id="lock-screen" class="lock-screen hidden">
+    <div class="lock-card">
+      <div class="lock-brand">
+        <div class="brand-icon">Q</div>
+        <div class="brand-text">
+          <h1>Qoder2OAPI 控制台</h1>
+          <div class="brand-sub">本地 OpenAI 兼容代理</div>
+        </div>
+      </div>
+
+      <div>
+        <p style="margin-bottom: 12px; font-size: 13px; color: var(--text-muted);">
+          管理接口需要代理 API Key。把服务启动时打印的密钥，或 <code>data/api_key.txt</code> 里的内容粘贴到下面。
+        </p>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <input 
+            type="password" 
+            id="lock-key-input" 
+            class="input-control" 
+            placeholder="粘贴代理 API Key"
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <div class="field-hint">
+            启动日志里也会打印一次。这个 Key 只用于本代理，不是 Qoder 账号密码。
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end;">
+        <button id="lock-save-btn" class="btn btn-primary" style="width: 100%;">进入控制台</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Dashboard View -->
+  <div id="main-dashboard" class="app-container hidden">
+    <!-- Topbar Header -->
+    <header class="topbar">
+      <div class="brand-section">
+        <div class="brand-icon">Q</div>
+        <div class="brand-text">
+          <h1>
+            Qoder2OAPI
+            <span class="brand-version">v0.1.0</span>
+          </h1>
+          <div class="brand-sub">Qoder 中国区 → OpenAI 兼容接口</div>
+        </div>
+      </div>
+
+      <div class="topbar-actions">
+        <!-- Auth Status & OAuth Login trigger -->
+        <div id="auth-status-chip" class="status-badge">
+          <span id="auth-status-dot" class="dot dot-amber"></span>
+          <span id="auth-status-text">检测中...</span>
+        </div>
+
+        <div id="polling-chip" class="status-badge hidden" style="border-color: var(--accent-primary); color: var(--accent-primary);">
+          <span class="dot dot-blue pulse"></span>
+          <span id="polling-status-text">等待浏览器授权...</span>
+        </div>
+
+        <button id="login-btn" class="btn btn-primary">登录 Qoder</button>
+        <button id="refresh-all-btn" class="btn" title="刷新状态">刷新</button>
+      </div>
+    </header>
+
+    <!-- Section: 2 Columns: Quota & Service Info -->
+    <div class="grid-2col">
+      <!-- Left Panel: Quotas (Credits) -->
+      <section class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            额度（Credits）
+          </div>
+          <div id="quota-exceeded-chip" class="status-badge">
+            <span class="dot dot-green"></span> 正常
+          </div>
+        </div>
+
+        <div class="panel-body">
+          <!-- Empty / Not logged in state -->
+          <div id="quota-empty-state" class="hidden" style="text-align: center; padding: 28px 12px; color: var(--text-dim);">
+            <p>号池为空，没有额度数据。</p>
+            <p style="margin-top: 6px; font-size: 12px;">用「登录 Qoder」或下方粘贴 PAT 添加账号。</p>
+          </div>
+
+          <!-- Quota Active Groups -->
+          <div id="quota-content" class="quota-card-group">
+            <!-- 1. 套餐额度 (user_quota) -->
+            <div class="quota-item">
+              <div class="quota-meta-row">
+                <span class="quota-label" id="quota-user-label">套餐额度</span>
+                <span class="quota-nums tabular-nums" id="quota-user-nums">计算中...</span>
+              </div>
+              <div class="progress-track">
+                <div id="quota-user-bar" class="progress-fill progress-fill-teal" style="width: 0%;"></div>
+              </div>
+              <div class="quota-details-footer">
+                <span id="quota-user-unit">credits</span>
+                <span class="tabular-nums" id="quota-user-pct">0% 剩余</span>
+              </div>
+            </div>
+
+            <!-- 2. 加量包额度 (add_on_quota) -->
+            <div class="quota-item">
+              <div class="quota-meta-row">
+                <span class="quota-label" id="quota-addon-label">加量包</span>
+                <span class="quota-nums tabular-nums" id="quota-addon-nums">计算中...</span>
+              </div>
+              <div class="progress-track">
+                <div id="quota-addon-bar" class="progress-fill progress-fill-teal" style="width: 0%;"></div>
+              </div>
+              <div class="quota-details-footer">
+                <span id="quota-addon-unit">credits</span>
+                <span class="tabular-nums" id="quota-addon-pct">0% 剩余</span>
+              </div>
+            </div>
+
+            <!-- Quota Meta Summary -->
+            <div class="quota-summary-strip">
+              <div class="stat-box">
+                <div class="stat-label">账号类型</div>
+                <div class="stat-val" id="quota-user-type">-</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">套餐到期</div>
+                <div class="stat-val tabular-nums" id="quota-expiry">-</div>
+              </div>
+            </div>
+            <div id="quota-account-lines" class="quota-account-lines"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Panel: Gateway Endpoint & Session Details -->
+      <section class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            接入信息
+          </div>
+          <div class="topbar-actions">
+            <button id="change-key-btn" class="btn btn-sm">更换 Key</button>
+            <button id="rotate-key-btn" class="btn btn-sm">重新生成 Key</button>
+          </div>
+        </div>
+
+        <div class="panel-body">
+          <div class="info-row">
+            <span class="info-label">OpenAI Base URL</span>
+            <span class="info-value">
+              <span id="proxy-endpoint">http://127.0.0.1:8000/v1</span>
+              <button id="copy-endpoint-btn" class="btn btn-sm">复制</button>
+            </span>
+          </div>
+
+          <div class="info-row">
+            <span class="info-label">代理 API Key</span>
+            <span class="info-value">
+              <span id="current-key-display">sk-***</span>
+            </span>
+          </div>
+
+          <div class="info-row">
+            <span class="info-label">号池</span>
+            <span class="info-value" id="pool-summary">0 可用 / 共 0</span>
+          </div>
+
+          <!-- Code Snippet -->
+          <div style="margin-top: 10px;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span class="field-hint">调用示例：</span>
+            </div>
+            <div class="code-preview">
+              <button id="copy-sample-code-btn" class="btn btn-sm copy-btn">复制调用示例</button>
+              <pre id="sample-code-block" style="white-space: pre-wrap; word-break: break-all; margin: 0;"></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div class="panel-title">账号池</div>
+        <span id="accounts-count" class="brand-version">0 个账号</span>
+      </div>
+      <div class="panel-body">
+        <div class="pat-add-row">
+          <input
+            type="password"
+            id="pat-input"
+            class="input-control"
+            placeholder="粘贴 Qoder PAT（pt-...）"
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <button id="add-pat-btn" class="btn btn-primary">添加 PAT</button>
+        </div>
+        <p class="field-hint" style="margin-top: 8px;">
+          在 <code>qoder.com.cn/account/integrations</code> 创建 Personal Access Token。这不是本代理的 API Key。
+        </p>
+      </div>
+      <div class="panel-body" style="padding: 0;">
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>类型</th>
+                <th>账号</th>
+                <th>剩余 credits</th>
+                <th>到期</th>
+                <th>启用</th>
+                <th>标记</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="accounts-table-body">
+              <tr>
+                <td colspan="7" style="text-align: center; padding: 24px; color: var(--text-dim);">
+                  暂无账号
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section: Model Catalog Table -->
+    <section class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+          模型目录
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span id="models-count" class="brand-version">0 个模型</span>
+        </div>
+      </div>
+
+      <div class="panel-body" style="padding: 0;">
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="min-width: 200px;">模型名称 / Key</th>
+                <th style="min-width: 140px;">思考强度</th>
+                <th style="min-width: 90px;">上下文</th>
+                <th style="min-width: 90px;">最大输出</th>
+                <th style="min-width: 110px;">能力</th>
+                <th style="min-width: 70px;">状态</th>
+              </tr>
+            </thead>
+            <tbody id="models-table-body">
+              <tr>
+                <td colspan="6" style="text-align: center; padding: 24px; color: var(--text-dim);">
+                  正在加载模型配置...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div style="padding: 10px 16px; background: var(--bg-card-subtle); border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-dim);">
+        默认使用每个模型支持的最大思考强度和最大上下文。请求里带 <code>reasoning_effort</code> 时按客户端为准。
+      </div>
+    </section>
+
+    <!-- Footer Note -->
+    <footer class="footer-note">
+      本机代理 · 不经过 qodercn CLI
+    </footer>
+  </div>
+
+  <!-- Modal: Change API Key -->
+  <div id="key-modal" class="modal-overlay hidden">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2>更换代理 API Key</h2>
+      </div>
+      <div class="modal-body">
+        <p class="field-hint">只改浏览器里保存的密钥，用来访问本控制台和 <code>/v1</code> 接口。</p>
+        <input 
+          type="text" 
+          id="key-modal-input" 
+          class="input-control" 
+          placeholder="粘贴新的 API Key"
+          autocomplete="off"
+        >
+      </div>
+      <div class="modal-footer">
+        <button id="key-modal-cancel" class="btn">取消</button>
+        <button id="key-modal-save" class="btn btn-primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Rotate Key Result -->
+  <div id="rotate-modal" class="modal-overlay hidden">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2>已生成新的 API Key</h2>
+      </div>
+      <div class="modal-body">
+        <p class="field-hint">
+          新 Key 已写入 <code>data/api_key.txt</code>，旧 Key 立刻失效。请复制保存：
+        </p>
+        <input 
+          type="text" 
+          id="rotated-key-value" 
+          class="input-control" 
+          readonly 
+          style="background: #090b0e; color: #38bdf8; font-weight: 600;"
+        >
+      </div>
+      <div class="modal-footer">
+        <button id="copy-rotated-key-btn" class="btn btn-primary">复制</button>
+        <button id="rotate-modal-close" class="btn">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirm-modal" class="modal-overlay hidden">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2 id="confirm-title">确认</h2>
+      </div>
+      <div class="modal-body">
+        <p class="field-hint" id="confirm-message"></p>
+      </div>
+      <div class="modal-footer">
+        <button id="confirm-cancel" class="btn">取消</button>
+        <button id="confirm-ok" class="btn btn-danger">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- App Script -->
+  <script src="/static/app.js"></script>
+</body>
+</html>
