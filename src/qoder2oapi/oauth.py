@@ -61,7 +61,7 @@ def start_device_flow() -> dict[str, str]:
     }
 
 
-def _parse_expiry(data: dict[str, Any]) -> int:
+def _parse_expiry(data: dict[str, Any], expires_in_unit: str = "seconds") -> int:
     now_ms = int(time.time() * 1000)
     raw_exp = data.get("expires_at") or data.get("expiresAt")
     if isinstance(raw_exp, (int, float)):
@@ -80,11 +80,23 @@ def _parse_expiry(data: dict[str, Any]) -> int:
     raw_in = data.get("expires_in") or data.get("expiresIn")
     if isinstance(raw_in, (int, float, str)):
         try:
-            return now_ms + int(float(raw_in) * 1000)
+            duration = int(float(raw_in))
+            duration_ms = duration if expires_in_unit == "milliseconds" else duration * 1000
+            return now_ms + duration_ms
         except Exception:
             pass
 
     return now_ms + 30 * 24 * 3600 * 1000
+
+
+def extract_user_id(data: dict[str, Any], include_id: bool = False) -> str:
+    candidates = [data.get("user_id"), data.get("userId")]
+    if include_id:
+        candidates.insert(0, data.get("id"))
+    for value in candidates:
+        if isinstance(value, (str, int)) and str(value).strip():
+            return str(value).strip()
+    return ""
 
 
 async def poll_device_flow(login_id: str) -> dict[str, Any]:
@@ -119,14 +131,14 @@ async def poll_device_flow(login_id: str) -> dict[str, Any]:
             return {"status": "pending"}
 
         refresh_token = token_data.get("refresh_token") or token_data.get("refreshToken", "")
-        user_id = str(token_data.get("user_id") or token_data.get("userId", ""))
+        user_id = extract_user_id(token_data)
         expires_at = _parse_expiry(token_data)
 
         user_info = await fetch_userinfo(token)
         name = user_info.get("name") or user_info.get("nickname", "")
         email = user_info.get("email", "")
         if not user_id:
-            user_id = str(user_info.get("user_id") or user_info.get("userId", ""))
+            user_id = extract_user_id(user_info, include_id=True)
 
         record = TokenRecord(
             id=str(uuid.uuid4()),

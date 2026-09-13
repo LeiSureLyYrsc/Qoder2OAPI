@@ -19,6 +19,7 @@ def test_prefix_and_flash_aliases_resolve():
     assert alias_to_internal_key("cn/deepseek-v4-flash") == "dfmodel"
     assert alias_to_internal_key("deepseek-flash") == "dfmodel"
     assert alias_to_internal_key("DeepSeek-Flash") == "dfmodel"
+    assert alias_to_internal_key("cn/deepseek-flash") == "dfmodel"
     assert alias_to_internal_key("cn/deepseek-v4.1-flash") == "dfmodel"
     assert alias_to_internal_key("qoder-cn/auto") == "auto"
     assert alias_to_internal_key("cn/glm-5.3-flash") == "gfmodel"
@@ -27,7 +28,7 @@ def test_prefix_and_flash_aliases_resolve():
 
 
 def test_display_names_match_client_labels():
-    assert public_name_for_key("dfmodel") == "DeepSeek V4 Flash"
+    assert public_name_for_key("dfmodel") == "DeepSeek Flash"
     assert public_name_for_key("dmodel") == "DeepSeek V4 Pro"
     assert public_name_for_key("qfmodel") == "Qwen 3.8 Flash"
     assert public_name_for_key("mmodel") == "MiniMax M3"

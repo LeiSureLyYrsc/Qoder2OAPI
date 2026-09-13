@@ -40,7 +40,7 @@ curl http://127.0.0.1:8000/v1/chat/completions \
 - `GET /v1/dashboard/billing/usage`（credits，不是美元）
 - `GET /v1/dashboard/billing/subscription`
 
-`GET /v1/models` 返回带 `cn/` 前缀的公开名（如 `cn/deepseek-v4-pro`、`cn/qwen3.7-max`）。不带前缀的公开名和内部 key（`dmodel` 等）仍可调用。客户端里的 DeepSeek-Flash / V4.1-Flash 对应 `cn/deepseek-v4-flash`（内部 `dfmodel`）。
+`GET /v1/models` 返回带 `cn/` 前缀的公开名（如 `cn/deepseek-v4-pro`、`cn/qwen3.7-max`）。不带前缀的公开名和内部 key（`dmodel` 等）仍可调用。最新版客户端显示的 DeepSeek-Flash 使用稳定公开 ID `cn/deepseek-v4-flash`（内部 `dfmodel`）；V4.1-Flash 写法也作为兼容别名处理。
 
 未指定时，每个模型使用其最大思考强度和最大上下文。可用 `reasoning_effort`、`max_tokens`，或 `extra_body.context_length` 覆盖窗口。
 

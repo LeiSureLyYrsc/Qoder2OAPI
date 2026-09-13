@@ -1,5 +1,7 @@
+import time
 import pytest
-from qoder2oapi.catalog import _extract_chat_list, catalog_manager
+from qoder2oapi.catalog import CatalogManager, _extract_chat_list, catalog_manager
+from qoder2oapi.models import AccountRecord
 from qoder2oapi.models import ChatCompletionRequest, ChatMessage
 from qoder2oapi.translator import translate_openai_to_qoder
 
@@ -171,6 +173,74 @@ def test_scene_map_catalog_and_missing_max_input():
     chat = _extract_chat_list(data)
     assert chat[0]["key"] == "lite"
     assert catalog_manager.get_max_context_length(chat[0]) == 200000
+
+
+def test_scene_map_merges_all_scenes_with_preferred_precedence():
+    data = {
+        "chat": [
+            {"key": "auto", "display_name": "Auto"},
+            {"key": "dfmodel", "display_name": "DeepSeek-Flash"},
+        ],
+        "default": [
+            {"key": "lite", "display_name": "Lite"},
+            {"key": "dfmodel", "display_name": "Old DeepSeek name"},
+        ],
+        "enterprise": [
+            {"key": "gfmodel", "display_name": "GLM-5.3-Flash"},
+        ],
+        "metadata": {"version": 1},
+    }
+    models = _extract_chat_list(data)
+    assert [item["key"] for item in models] == ["auto", "dfmodel", "lite", "gfmodel"]
+    assert models[1]["display_name"] == "DeepSeek-Flash"
+
+
+@pytest.mark.asyncio
+async def test_pat_catalog_prefers_algo_encode_and_retries_after_auth(monkeypatch):
+    account = AccountRecord(
+        id="pat-account",
+        kind="pat",
+        access_token="jt-old",
+        refresh_token="jrt-old",
+        pat="pt-secret",
+        user_id="real-user-id",
+        machine_id="machine-id",
+        expires_at=int(time.time() * 1000) + 60 * 60 * 1000,
+    )
+    calls = []
+
+    class MockResponse:
+        def __init__(self, status_code, data=None):
+            self.status_code = status_code
+            self._data = data or {}
+
+        def json(self):
+            return self._data
+
+    class MockClient:
+        async def get(self, url, headers=None):
+            calls.append((url, headers["Cosy-User"]))
+            if len(calls) == 1:
+                return MockResponse(401)
+            return MockResponse(200, {"chat": [{"key": "auto"}]})
+
+    async def mock_ensure_fresh(current, force=False):
+        if force:
+            current.access_token = "jt-new"
+        return current
+
+    manager = CatalogManager()
+    from qoder2oapi import catalog
+
+    monkeypatch.setattr(catalog.token_store, "list_accounts", lambda: [account])
+    monkeypatch.setattr(catalog, "get_http_client", lambda: MockClient())
+    monkeypatch.setattr(catalog, "ensure_fresh", mock_ensure_fresh)
+
+    models = await manager.fetch_models()
+    assert models == [{"key": "auto"}]
+    assert len(calls) == 2
+    assert calls[0][0].endswith("/algo/api/v2/model/list?Encode=1")
+    assert calls[0][1] == "real-user-id"
 
 
 def test_extract_chat_list_from_string_envelope():

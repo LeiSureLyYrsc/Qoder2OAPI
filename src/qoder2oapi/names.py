@@ -17,7 +17,7 @@ PUBLIC_BY_KEY: dict[str, dict[str, str]] = {
     "qfmodel": {"id": "qwen3.8-flash", "name": "Qwen 3.8 Flash"},
     "q36fmodel": {"id": "qwen3.6-flash", "name": "Qwen 3.6 Flash"},
     "dmodel": {"id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro"},
-    "dfmodel": {"id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash"},
+    "dfmodel": {"id": "deepseek-v4-flash", "name": "DeepSeek Flash"},
     "gmodel": {"id": "glm-5.3", "name": "GLM 5.3"},
     "gfmodel": {"id": "glm-5.3-flash", "name": "GLM 5.3 Flash"},
     "gm53model": {"id": "glm-5.3", "name": "GLM 5.3"},

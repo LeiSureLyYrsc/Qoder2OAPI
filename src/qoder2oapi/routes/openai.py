@@ -8,6 +8,7 @@ from qoder2oapi.models import ChatCompletionRequest, ModelCard, ModelListRespons
 from qoder2oapi.names import public_id_for_key
 from qoder2oapi.pool import pool
 from qoder2oapi.quota import fetch_quota
+from qoder2oapi.refresh import ensure_fresh
 from qoder2oapi.token_store import token_store
 from qoder2oapi.translator import translate_openai_to_qoder
 
@@ -37,6 +38,11 @@ async def list_models() -> ModelListResponse:
 @router.post("/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
     usable_accounts = pool.peek_usable()
+    if not usable_accounts:
+        for account in token_store.list_accounts():
+            if account.kind == "pat" and account.enabled and account.skip_auth:
+                await ensure_fresh(account, force=True)
+        usable_accounts = pool.peek_usable()
     if not usable_accounts:
         # Check if all accounts are only skipped for quota
         all_accounts = token_store.list_accounts()

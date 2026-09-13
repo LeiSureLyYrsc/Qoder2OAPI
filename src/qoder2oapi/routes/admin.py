@@ -103,6 +103,10 @@ async def add_pat_account(body: PatLoginRequest) -> dict[str, Any]:
     try:
         record = await exchange_pat(body.pat)
         saved = token_store.upsert(record)
+        try:
+            await catalog_manager.fetch_models()
+        except Exception:
+            pass
         return {"status": "ok", "account": saved.public_dump()}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to add PAT account: {e}")

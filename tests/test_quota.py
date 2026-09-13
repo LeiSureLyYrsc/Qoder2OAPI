@@ -1,3 +1,4 @@
+import time
 import pytest
 from qoder2oapi.models import AccountRecord
 from qoder2oapi.quota import fetch_quota, parse_quota_data, remaining_credits, account_exceeded
@@ -54,7 +55,7 @@ async def test_aggregate_quota_across_pool(monkeypatch):
         access_token="tok-2",
         user_id="u-2",
         machine_id="m-2",
-        expires_at=2000,
+        expires_at=int(time.time() * 1000) + 60 * 60 * 1000,
     )
     ts_mod.token_store.save_all([acc1, acc2])
 
@@ -99,3 +100,104 @@ async def test_aggregate_quota_across_pool(monkeypatch):
     assert not aggregated["is_quota_exceeded"]
     assert len(aggregated["accounts"]) == 2
 
+
+@pytest.mark.asyncio
+async def test_pat_quota_401_forces_refresh_and_retries(monkeypatch):
+    acc = AccountRecord(
+        id="acc-pat",
+        kind="pat",
+        access_token="jt-old",
+        refresh_token="jrt-old",
+        pat="pt-secret",
+        user_id="real-user-id",
+        machine_id="m-pat",
+        expires_at=int(time.time() * 1000) + 60 * 60 * 1000,
+    )
+    ts_mod.token_store.upsert(acc)
+    requests = []
+
+    class MockResp:
+        def __init__(self, status_code, data=None):
+            self.status_code = status_code
+            self._data = data or {}
+
+        def json(self):
+            return self._data
+
+    class MockClient:
+        async def get(self, url, headers=None, **kwargs):
+            token = headers.get("Authorization", "")
+            requests.append(token)
+            if token == "Bearer jt-old":
+                return MockResp(401)
+            return MockResp(
+                200,
+                {
+                    "data": {
+                        "userType": "personal",
+                        "userQuota": {"total": 100, "used": 10, "remaining": 90},
+                        "addOnQuota": {"total": 0, "used": 0, "remaining": 0},
+                    }
+                },
+            )
+
+    async def mock_ensure_fresh(account, force=False):
+        if force:
+            account.access_token = "jt-new"
+            ts_mod.token_store.upsert(account)
+        return account
+
+    from qoder2oapi import quota
+
+    monkeypatch.setattr(quota, "get_http_client", lambda: MockClient())
+    monkeypatch.setattr(quota, "ensure_fresh", mock_ensure_fresh)
+
+    result = await quota.fetch_quota_for_account(acc)
+    assert result["user_quota"]["remaining"] == 90
+    assert requests == ["Bearer jt-old", "Bearer jt-new"]
+    saved = ts_mod.token_store.get(acc.id)
+    assert saved is not None
+    assert saved.skip_auth is False
+
+
+@pytest.mark.asyncio
+async def test_pat_quota_retry_500_does_not_mark_auth_failed(monkeypatch):
+    acc = AccountRecord(
+        id="acc-pat-500",
+        kind="pat",
+        access_token="jt-old",
+        refresh_token="jrt-old",
+        pat="pt-secret",
+        user_id="real-user-id",
+        machine_id="m-pat",
+        expires_at=int(time.time() * 1000) + 60 * 60 * 1000,
+    )
+    ts_mod.token_store.upsert(acc)
+
+    class MockResp:
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+    class MockClient:
+        calls = 0
+
+        async def get(self, *args, **kwargs):
+            self.calls += 1
+            return MockResp(401 if self.calls == 1 else 500)
+
+    async def mock_ensure_fresh(account, force=False):
+        if force:
+            account.access_token = "jt-new"
+        return account
+
+    from qoder2oapi import quota
+
+    client = MockClient()
+    monkeypatch.setattr(quota, "get_http_client", lambda: client)
+    monkeypatch.setattr(quota, "ensure_fresh", mock_ensure_fresh)
+
+    result = await quota.fetch_quota_for_account(acc)
+    assert result == {"error": "HTTP 500", "status_code": 500}
+    saved = ts_mod.token_store.get(acc.id)
+    assert saved is not None
+    assert saved.skip_auth is False

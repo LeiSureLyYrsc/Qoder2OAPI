@@ -131,3 +131,42 @@ async def test_admin_export_import_and_clear_flags(test_client):
         )
         assert bad_mode.status_code == 400
 
+
+@pytest.mark.asyncio
+async def test_add_pat_refreshes_model_catalog(test_client, monkeypatch):
+    from qoder2oapi.models import AccountRecord
+    from qoder2oapi.routes import admin
+
+    refreshed = False
+
+    async def mock_exchange_pat(pat):
+        assert pat == "pt-secret"
+        return AccountRecord(
+            id="pat-account",
+            kind="pat",
+            access_token="jt-token",
+            refresh_token="jrt-token",
+            pat=pat,
+            user_id="real-user-id",
+            machine_id="machine-id",
+            expires_at=9_999_999_999_999,
+        )
+
+    async def mock_fetch_models():
+        nonlocal refreshed
+        refreshed = True
+        return [{"key": "auto"}]
+
+    monkeypatch.setattr(admin, "exchange_pat", mock_exchange_pat)
+    monkeypatch.setattr(admin.catalog_manager, "fetch_models", mock_fetch_models)
+
+    headers = {"Authorization": f"Bearer {settings.qoder2oapi_api_key}"}
+    async with test_client as client:
+        response = await client.post(
+            "/api/admin/accounts/pat",
+            headers=headers,
+            json={"pat": "pt-secret"},
+        )
+    assert response.status_code == 200
+    assert response.json()["account"]["user_id"] == "real-user-id"
+    assert refreshed is True

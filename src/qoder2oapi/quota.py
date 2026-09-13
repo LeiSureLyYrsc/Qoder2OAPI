@@ -4,6 +4,7 @@ from qoder2oapi.constants import QUOTA_URL
 from qoder2oapi.http import get_http_client
 from qoder2oapi.models import AccountRecord
 from qoder2oapi.pool import pool
+from qoder2oapi.refresh import ensure_fresh
 from qoder2oapi.token_store import token_store
 
 
@@ -55,6 +56,10 @@ def parse_quota_data(data: dict[str, Any]) -> dict[str, Any]:
 
 
 async def fetch_quota_for_account(account: AccountRecord) -> dict[str, Any]:
+    if account.kind == "pat":
+        account = await ensure_fresh(account)
+        if account.skip_auth:
+            return {"error": account.last_error or "PAT authentication failed", "status_code": 401}
     client = get_http_client()
     headers = {
         "Authorization": f"Bearer {account.access_token}",
@@ -63,8 +68,25 @@ async def fetch_quota_for_account(account: AccountRecord) -> dict[str, Any]:
     try:
         resp = await client.get(QUOTA_URL, headers=headers)
         if resp.status_code == 401:
-            pool.mark_skip_auth(account.id, error="Quota fetch 401 unauthorized")
-            return {"error": "Unauthorized", "status_code": 401}
+            if account.kind == "pat":
+                account = await ensure_fresh(account, force=True)
+                if not account.skip_auth:
+                    headers["Authorization"] = f"Bearer {account.access_token}"
+                    resp = await client.get(QUOTA_URL, headers=headers)
+                    if resp.status_code == 200:
+                        res_json = resp.json()
+                        data = res_json.get("data") if isinstance(res_json.get("data"), dict) else res_json
+                        parsed = parse_quota_data(data)
+                        account.quota_snapshot = parsed
+                        if account_exceeded(parsed):
+                            pool.mark_skip_quota(account.id, error="Quota exceeded")
+                        else:
+                            token_store.upsert(account)
+                        return parsed
+                    if resp.status_code not in (401, 403):
+                        return {"error": f"HTTP {resp.status_code}", "status_code": resp.status_code}
+            pool.mark_skip_auth(account.id, error=f"Quota fetch HTTP {resp.status_code}")
+            return {"error": "Unauthorized", "status_code": resp.status_code}
         if resp.status_code != 200:
             return {"error": f"HTTP {resp.status_code}", "status_code": resp.status_code}
         res_json = resp.json()

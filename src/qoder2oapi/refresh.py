@@ -1,10 +1,11 @@
+import asyncio
 import time
 import uuid
 from typing import Any
 from qoder2oapi.constants import JOB_TOKEN_EXCHANGE, JOB_TOKEN_REFRESH
 from qoder2oapi.http import get_http_client
 from qoder2oapi.models import AccountRecord
-from qoder2oapi.oauth import _parse_expiry, fetch_userinfo
+from qoder2oapi.oauth import _parse_expiry, extract_user_id, fetch_userinfo
 from qoder2oapi.token_store import token_store
 
 PAT_HEADERS = {
@@ -14,6 +15,19 @@ PAT_HEADERS = {
     "Cosy-Version": "1.0.0",
     "Cosy-ClientType": "5",
 }
+
+_refresh_locks: dict[str, asyncio.Lock] = {}
+
+
+def _extract_access_token(data: dict[str, Any]) -> str:
+    return str(
+        data.get("token")
+        or data.get("access_token")
+        or data.get("job_token")
+        or data.get("jobToken")
+        or data.get("jt")
+        or ""
+    )
 
 
 async def exchange_pat(pat: str) -> AccountRecord:
@@ -25,13 +39,13 @@ async def exchange_pat(pat: str) -> AccountRecord:
 
     data = resp.json()
     token_data = data.get("data") if isinstance(data.get("data"), dict) else data
-    access_token = token_data.get("token") or token_data.get("access_token")
+    access_token = _extract_access_token(token_data)
     if not access_token:
         raise ValueError(f"No token in exchange response: {data}")
 
     refresh_token = token_data.get("refresh_token") or token_data.get("refreshToken", "")
-    expires_at = _parse_expiry(token_data)
-    user_id = str(token_data.get("user_id") or token_data.get("userId", ""))
+    expires_at = _parse_expiry(token_data, expires_in_unit="milliseconds")
+    user_id = extract_user_id(token_data)
 
     name = ""
     email = ""
@@ -40,7 +54,10 @@ async def exchange_pat(pat: str) -> AccountRecord:
         name = user_info.get("name") or user_info.get("nickname", "")
         email = user_info.get("email", "")
         if not user_id:
-            user_id = str(user_info.get("user_id") or user_info.get("userId", ""))
+            user_id = extract_user_id(user_info, include_id=True)
+
+    if not user_id:
+        raise ValueError("PAT exchange succeeded but Qoder user ID could not be resolved")
 
     machine_id = str(uuid.uuid4())
     record = AccountRecord(
@@ -61,13 +78,39 @@ async def exchange_pat(pat: str) -> AccountRecord:
     return record
 
 
-async def ensure_fresh(account: AccountRecord) -> AccountRecord:
+async def ensure_fresh(account: AccountRecord, force: bool = False) -> AccountRecord:
     if account.kind != "pat":
         return account
 
+    lock_key = account.id or account.user_id or account.pat
+    lock = _refresh_locks.setdefault(lock_key, asyncio.Lock())
+    async with lock:
+        latest = token_store.get(account.id) if account.id else None
+        if latest and latest.access_token != account.access_token:
+            return latest
+        return await _ensure_fresh_locked(account, force=force)
+
+
+async def _ensure_fresh_locked(account: AccountRecord, force: bool = False) -> AccountRecord:
+
+    if not account.user_id:
+        user_info = await fetch_userinfo(account.access_token)
+        user_id = extract_user_id(user_info, include_id=True)
+        if user_id:
+            account.user_id = user_id
+            account.name = str(user_info.get("name") or user_info.get("nickname") or account.name)
+            account.email = str(user_info.get("email") or account.email)
+            account.skip_auth = False
+            account.last_error = ""
+            token_store.upsert(account)
+
     now_ms = int(time.time() * 1000)
     # If expires_at - now > 5 minutes (300,000 ms): return unchanged
-    if account.expires_at - now_ms > 300_000:
+    if not force and account.expires_at - now_ms > 300_000 and account.user_id:
+        if account.skip_auth or account.last_error:
+            account.skip_auth = False
+            account.last_error = ""
+            token_store.upsert(account)
         return account
 
     client = get_http_client()
@@ -89,14 +132,14 @@ async def ensure_fresh(account: AccountRecord) -> AccountRecord:
             if resp.status_code == 200:
                 data = resp.json()
                 token_data = data.get("data") if isinstance(data.get("data"), dict) else data
-                new_access_token = token_data.get("token") or token_data.get("access_token")
+                new_access_token = _extract_access_token(token_data)
                 if new_access_token:
                     new_refresh_token = (
                         token_data.get("refresh_token")
                         or token_data.get("refreshToken")
                         or account.refresh_token
                     )
-                    new_expires_at = _parse_expiry(token_data)
+                    new_expires_at = _parse_expiry(token_data, expires_in_unit="milliseconds")
                     refreshed_ok = True
         except Exception:
             refreshed_ok = False
@@ -118,13 +161,13 @@ async def ensure_fresh(account: AccountRecord) -> AccountRecord:
             if resp.status_code == 200:
                 data = resp.json()
                 token_data = data.get("data") if isinstance(data.get("data"), dict) else data
-                new_access_token = token_data.get("token") or token_data.get("access_token")
+                new_access_token = _extract_access_token(token_data)
                 if new_access_token:
                     new_refresh_token = (
                         token_data.get("refresh_token")
                         or token_data.get("refreshToken", "")
                     )
-                    new_expires_at = _parse_expiry(token_data)
+                    new_expires_at = _parse_expiry(token_data, expires_in_unit="milliseconds")
                     refreshed_ok = True
             else:
                 account.skip_auth = True
@@ -142,6 +185,18 @@ async def ensure_fresh(account: AccountRecord) -> AccountRecord:
         if new_refresh_token:
             account.refresh_token = new_refresh_token
         account.expires_at = new_expires_at
+        if not account.user_id:
+            user_info = await fetch_userinfo(account.access_token)
+            user_id = extract_user_id(user_info, include_id=True)
+            if user_id:
+                account.user_id = user_id
+                account.name = str(user_info.get("name") or user_info.get("nickname") or account.name)
+                account.email = str(user_info.get("email") or account.email)
+        if not account.user_id:
+            account.skip_auth = True
+            account.last_error = "Qoder user ID could not be resolved for PAT account"
+            token_store.upsert(account)
+            return account
         account.skip_auth = False
         account.last_error = ""
         token_store.upsert(account)

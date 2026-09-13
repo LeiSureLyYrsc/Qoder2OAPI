@@ -8,6 +8,7 @@ from qoder2oapi.constants import MODEL_LIST_ALGO_URL, MODEL_LIST_URL
 from qoder2oapi.cosy import build_cosy_headers
 from qoder2oapi.http import get_http_client
 from qoder2oapi.names import catalog_key_candidates
+from qoder2oapi.refresh import ensure_fresh
 from qoder2oapi.token_store import token_store
 
 _THINKING_ORDER = ["none", "low", "medium", "high", "xhigh", "max"]
@@ -165,25 +166,23 @@ class CatalogManager:
         record = usable[0] if usable else token_store.load_token()
         if not record:
             return self.raw_models
+        if record.kind == "pat":
+            record = await ensure_fresh(record)
+            if record.skip_auth or not record.user_id:
+                return self.raw_models
 
-        creds = record.model_dump()
         client = get_http_client()
-        headers = build_cosy_headers(b"", MODEL_LIST_URL, creds)
-        headers["Accept"] = "application/json"
+        urls = (
+            [f"{MODEL_LIST_ALGO_URL}?Encode=1", MODEL_LIST_ALGO_URL, MODEL_LIST_URL]
+            if record.kind == "pat"
+            else [MODEL_LIST_URL, f"{MODEL_LIST_ALGO_URL}?Encode=1", MODEL_LIST_ALGO_URL]
+        )
 
-        resp = None
-        try:
-            resp = await client.get(MODEL_LIST_URL, headers=headers)
-        except Exception:
-            resp = None
-
-        if not resp or resp.status_code != 200:
-            headers_algo = build_cosy_headers(b"", MODEL_LIST_ALGO_URL, creds)
-            headers_algo["Accept"] = "application/json"
-            try:
-                resp = await client.get(MODEL_LIST_ALGO_URL, headers=headers_algo)
-            except Exception:
-                resp = None
+        resp = await _fetch_model_response(client, urls, record.model_dump())
+        if record.kind == "pat" and resp is not None and resp.status_code in (401, 403):
+            record = await ensure_fresh(record, force=True)
+            if not record.skip_auth and record.user_id:
+                resp = await _fetch_model_response(client, urls, record.model_dump())
 
         if resp and resp.status_code == 200:
             data = resp.json()
@@ -215,6 +214,23 @@ class CatalogManager:
         if effort:
             config_copy["reasoning_effort"] = effort
         return config_copy
+
+
+async def _fetch_model_response(client: Any, urls: list[str], creds: dict[str, Any]) -> Any:
+    last_response = None
+    for url in urls:
+        headers = build_cosy_headers(b"", url, creds)
+        headers["Accept"] = "application/json"
+        try:
+            response = await client.get(url, headers=headers)
+        except Exception:
+            continue
+        last_response = response
+        if response.status_code == 200:
+            return response
+        if response.status_code in (401, 403):
+            return response
+    return last_response
 
 
 def _parse_token_count(value: Any) -> int:
@@ -366,15 +382,16 @@ def _models_from_list(items: Any) -> list[dict[str, Any]]:
 
 
 def _models_from_scene_map(data: dict[str, Any]) -> list[dict[str, Any]]:
-    preferred = ("chat", "default")
-    for name in preferred:
-        found = _models_from_list(data.get(name))
-        if found:
-            return found
     merged: dict[str, dict[str, Any]] = {}
-    for value in data.values():
+    ordered_values = [data.get("chat"), data.get("default")]
+    ordered_values.extend(
+        value for name, value in data.items() if name not in ("chat", "default")
+    )
+    for value in ordered_values:
         for item in _models_from_list(value):
-            merged[str(item.get("key"))] = item
+            key = str(item.get("key") or "")
+            if key and key not in merged:
+                merged[key] = item
     return list(merged.values())
 
 

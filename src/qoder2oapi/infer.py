@@ -95,7 +95,7 @@ async def execute_infer(
         if upstream_resp.status_code in (401, 403):
             await upstream_resp.aclose()
             if account.kind == "pat":
-                account = await ensure_fresh(account)
+                account = await ensure_fresh(account, force=True)
                 if pool.usable(account):
                     # retry once with refreshed account
                     creds = account.model_dump()

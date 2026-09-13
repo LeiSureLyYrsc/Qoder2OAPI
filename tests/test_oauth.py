@@ -81,3 +81,33 @@ async def test_oauth_success_200_parse(monkeypatch):
     accounts = oauth.token_store.list_accounts()
     assert len(accounts) == 1
     assert accounts[0].kind == "oauth"
+
+
+@pytest.mark.asyncio
+async def test_oauth_userinfo_id_is_used_when_poll_omits_user_id(monkeypatch):
+    flow = start_device_flow()
+
+    class MockPollResp:
+        status_code = 200
+
+        def json(self):
+            return {"data": {"token": "dt-token", "expires_in": 3600}}
+
+    class MockUserInfoResp:
+        status_code = 200
+
+        def json(self):
+            return {"data": {"id": "userinfo-id", "nickname": "User"}}
+
+    class MockClient:
+        async def get(self, url, *args, **kwargs):
+            if "poll" in str(url):
+                return MockPollResp()
+            return MockUserInfoResp()
+
+    from qoder2oapi import oauth
+
+    monkeypatch.setattr(oauth, "get_http_client", lambda: MockClient())
+    result = await poll_device_flow(flow["login_id"])
+    assert result["status"] == "ok"
+    assert result["user"]["user_id"] == "userinfo-id"

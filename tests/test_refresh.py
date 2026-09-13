@@ -1,7 +1,7 @@
 import time
 import pytest
 from qoder2oapi.models import AccountRecord
-from qoder2oapi.refresh import ensure_fresh
+from qoder2oapi.refresh import ensure_fresh, exchange_pat
 import qoder2oapi.token_store as ts_mod
 
 
@@ -62,6 +62,107 @@ async def test_pat_not_expired_skips_http(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_fresh_pat_clears_stale_skip_auth_without_http(monkeypatch):
+    called = False
+
+    class MockClient:
+        async def post(self, *args, **kwargs):
+            nonlocal called
+            called = True
+            raise RuntimeError("Should not be called")
+
+    from qoder2oapi import refresh
+
+    monkeypatch.setattr(refresh, "get_http_client", lambda: MockClient())
+    account = AccountRecord(
+        id="stale-skip",
+        kind="pat",
+        access_token="jt-valid",
+        refresh_token="jrt-valid",
+        pat="pt-secret",
+        user_id="real-user-id",
+        machine_id="m1",
+        expires_at=int(time.time() * 1000) + 60 * 60 * 1000,
+        skip_auth=True,
+        last_error="old transient failure",
+    )
+    ts_mod.token_store.upsert(account)
+
+    result = await ensure_fresh(account)
+    assert called is False
+    assert result.skip_auth is False
+    assert result.last_error == ""
+    saved = ts_mod.token_store.get(account.id)
+    assert saved is not None and saved.skip_auth is False
+
+
+@pytest.mark.asyncio
+async def test_exchange_pat_reads_userinfo_id_and_millisecond_ttl(monkeypatch):
+    now_ms = int(time.time() * 1000)
+
+    class MockResp:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {
+                "token": "jt-token",
+                "refresh_token": "jrt-token",
+                "expires_in": 86_400_000,
+            }
+
+    class MockClient:
+        async def post(self, *args, **kwargs):
+            return MockResp()
+
+    from qoder2oapi import refresh
+
+    monkeypatch.setattr(refresh, "get_http_client", lambda: MockClient())
+    monkeypatch.setattr(
+        refresh,
+        "fetch_userinfo",
+        lambda token: _async_value({"id": "real-user-id", "nickname": "PAT User"}),
+    )
+
+    account = await exchange_pat("pt-secret")
+    assert account.user_id == "real-user-id"
+    assert account.name == "PAT User"
+    assert account.access_token == "jt-token"
+    assert now_ms + 86_300_000 <= account.expires_at <= now_ms + 86_500_000
+
+
+@pytest.mark.asyncio
+async def test_exchange_pat_accepts_job_token_field(monkeypatch):
+    class MockResp:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"jobToken": "jt-token", "expires_in": 86_400_000}
+
+    class MockClient:
+        async def post(self, *args, **kwargs):
+            return MockResp()
+
+    from qoder2oapi import refresh
+
+    monkeypatch.setattr(refresh, "get_http_client", lambda: MockClient())
+    monkeypatch.setattr(
+        refresh,
+        "fetch_userinfo",
+        lambda token: _async_value({"id": "real-user-id"}),
+    )
+
+    account = await exchange_pat("pt-secret")
+    assert account.access_token == "jt-token"
+    assert account.user_id == "real-user-id"
+
+
+async def _async_value(value):
+    return value
+
+
+@pytest.mark.asyncio
 async def test_pat_refresh_200_updates_token(monkeypatch):
     class MockResp:
         status_code = 200
@@ -103,6 +204,48 @@ async def test_pat_refresh_200_updates_token(monkeypatch):
 
     saved = ts_mod.token_store.get(acc.id)
     assert saved.access_token == "jt-new-token"
+
+
+@pytest.mark.asyncio
+async def test_pat_force_refresh_does_http_when_not_expired(monkeypatch):
+    calls = 0
+
+    class MockResp:
+        status_code = 200
+
+        def json(self):
+            return {
+                "data": {
+                    "token": "jt-forced",
+                    "refresh_token": "jrt-forced",
+                    "expires_in": 3600,
+                }
+            }
+
+    class MockClient:
+        async def post(self, *args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return MockResp()
+
+    from qoder2oapi import refresh
+
+    monkeypatch.setattr(refresh, "get_http_client", lambda: MockClient())
+    account = AccountRecord(
+        id="acc-pat-force",
+        kind="pat",
+        access_token="jt-old",
+        refresh_token="jrt-old",
+        pat="pt-secret",
+        user_id="real-user-id",
+        machine_id="m1",
+        expires_at=int(time.time() * 1000) + 60 * 60 * 1000,
+    )
+
+    refreshed = await ensure_fresh(account, force=True)
+    assert calls == 1
+    assert refreshed.access_token == "jt-forced"
+    assert refreshed.skip_auth is False
 
 
 @pytest.mark.asyncio
