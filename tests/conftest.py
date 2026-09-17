@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from qoder2oapi.config import settings
+from qoder2oapi.runtime_settings import RuntimeSettings
 from qoder2oapi.token_store import TokenStore
 
 
@@ -13,6 +14,16 @@ def isolated_env(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "qoder2oapi_data_dir", str(test_data_dir))
     monkeypatch.setattr(settings, "qoder2oapi_api_key", "test-secret-key-1234")
 
+    new_settings = RuntimeSettings(data_dir=test_data_dir)
+    from qoder2oapi import runtime_settings as rs_module
+    monkeypatch.setattr(rs_module, "runtime_settings", new_settings)
+    from qoder2oapi import pool as pool_module
+    monkeypatch.setattr(pool_module, "runtime_settings", new_settings)
+    from qoder2oapi import refresh as refresh_module
+    monkeypatch.setattr(refresh_module, "runtime_settings", new_settings)
+    from qoder2oapi.routes import admin as admin_routes
+    monkeypatch.setattr(admin_routes, "runtime_settings", new_settings)
+
     from qoder2oapi import token_store as ts_module
     new_store = TokenStore(data_dir=test_data_dir)
     monkeypatch.setattr(ts_module, "token_store", new_store)
@@ -20,7 +31,6 @@ def isolated_env(tmp_path, monkeypatch):
     monkeypatch.setattr(oauth, "token_store", new_store)
     from qoder2oapi.routes import openai as openai_routes
     monkeypatch.setattr(openai_routes, "token_store", new_store)
-    from qoder2oapi.routes import admin as admin_routes
     monkeypatch.setattr(admin_routes, "token_store", new_store)
     from qoder2oapi import quota as quota_module
     monkeypatch.setattr(quota_module, "token_store", new_store)
@@ -28,9 +38,7 @@ def isolated_env(tmp_path, monkeypatch):
     monkeypatch.setattr(catalog_module, "token_store", new_store)
     from qoder2oapi import infer as infer_module
     monkeypatch.setattr(infer_module, "token_store", new_store)
-    from qoder2oapi import pool as pool_module
     monkeypatch.setattr(pool_module, "token_store", new_store)
-    from qoder2oapi import refresh as refresh_module
     monkeypatch.setattr(refresh_module, "token_store", new_store)
     from qoder2oapi import app as app_module
     monkeypatch.setattr(app_module, "token_store", new_store)

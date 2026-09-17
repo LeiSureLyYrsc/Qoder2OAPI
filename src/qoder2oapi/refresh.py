@@ -6,6 +6,7 @@ from qoder2oapi.constants import JOB_TOKEN_EXCHANGE, JOB_TOKEN_REFRESH
 from qoder2oapi.http import get_http_client
 from qoder2oapi.models import AccountRecord
 from qoder2oapi.oauth import _parse_expiry, extract_user_id, fetch_userinfo
+from qoder2oapi.runtime_settings import runtime_settings
 from qoder2oapi.token_store import token_store
 
 PAT_HEADERS = {
@@ -147,8 +148,9 @@ async def _ensure_fresh_locked(account: AccountRecord, force: bool = False) -> A
     # On failure, JOB_TOKEN_EXCHANGE with stored pat
     if not refreshed_ok:
         if not account.pat:
-            account.skip_auth = True
             account.last_error = "Missing PAT to re-exchange"
+            if runtime_settings.auto_mark_auth:
+                account.skip_auth = True
             token_store.upsert(account)
             return account
 
@@ -170,13 +172,15 @@ async def _ensure_fresh_locked(account: AccountRecord, force: bool = False) -> A
                     new_expires_at = _parse_expiry(token_data, expires_in_unit="milliseconds")
                     refreshed_ok = True
             else:
-                account.skip_auth = True
                 account.last_error = f"Re-exchange failed: HTTP {resp.status_code}"
+                if runtime_settings.auto_mark_auth:
+                    account.skip_auth = True
                 token_store.upsert(account)
                 return account
         except Exception as e:
-            account.skip_auth = True
             account.last_error = f"Re-exchange failed: {e}"
+            if runtime_settings.auto_mark_auth:
+                account.skip_auth = True
             token_store.upsert(account)
             return account
 
@@ -193,8 +197,9 @@ async def _ensure_fresh_locked(account: AccountRecord, force: bool = False) -> A
                 account.name = str(user_info.get("name") or user_info.get("nickname") or account.name)
                 account.email = str(user_info.get("email") or account.email)
         if not account.user_id:
-            account.skip_auth = True
             account.last_error = "Qoder user ID could not be resolved for PAT account"
+            if runtime_settings.auto_mark_auth:
+                account.skip_auth = True
             token_store.upsert(account)
             return account
         account.skip_auth = False
@@ -202,7 +207,8 @@ async def _ensure_fresh_locked(account: AccountRecord, force: bool = False) -> A
         token_store.upsert(account)
         return account
 
-    account.skip_auth = True
     account.last_error = "Failed to refresh or exchange PAT"
+    if runtime_settings.auto_mark_auth:
+        account.skip_auth = True
     token_store.upsert(account)
     return account

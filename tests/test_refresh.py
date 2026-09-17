@@ -335,3 +335,43 @@ async def test_pat_both_fail_sets_skip_auth(monkeypatch):
     assert "failed" in res.last_error.lower()
     saved = ts_mod.token_store.get(acc.id)
     assert saved.skip_auth is True
+
+
+@pytest.mark.asyncio
+async def test_pat_refresh_fail_with_auto_mark_auth_false(monkeypatch):
+    from qoder2oapi.runtime_settings import runtime_settings
+
+    runtime_settings.update(auto_mark_auth=False)
+
+    class MockFailResp:
+        status_code = 401
+        text = "unauthorized"
+
+        def json(self):
+            return {"code": 401}
+
+    class MockClient:
+        async def post(self, *args, **kwargs):
+            return MockFailResp()
+
+    from qoder2oapi import refresh
+    monkeypatch.setattr(refresh, "get_http_client", lambda: MockClient())
+
+    acc = AccountRecord(
+        id="acc-pat-fail-nomark",
+        kind="pat",
+        access_token="jt-old",
+        refresh_token="rt-old",
+        pat="pt-invalid",
+        user_id="u1",
+        machine_id="m1",
+        expires_at=0,
+    )
+    ts_mod.token_store.upsert(acc)
+
+    res = await ensure_fresh(acc)
+    assert res.skip_auth is False
+    assert "failed" in res.last_error.lower()
+    saved = ts_mod.token_store.get(acc.id)
+    assert saved.skip_auth is False
+    assert saved.last_error != ""

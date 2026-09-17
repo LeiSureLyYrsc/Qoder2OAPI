@@ -129,6 +129,15 @@
               </div>
             </div>
 
+            <!-- 3. 专属额度 (dedicated_resource_packages) -->
+            <div id="quota-dedicated-block" class="quota-item hidden">
+              <div class="quota-meta-row">
+                <span class="quota-label">专属额度</span>
+                <span class="quota-nums tabular-nums" id="quota-dedicated-nums"></span>
+              </div>
+              <div id="quota-dedicated-list" class="dedicated-packages-list"></div>
+            </div>
+
             <!-- Quota Meta Summary -->
             <div class="quota-summary-strip">
               <div class="stat-box">
@@ -218,8 +227,45 @@
         <p class="field-hint" style="margin-top: 8px;">
           在 <a href="https://qoder.com.cn/account/integrations" target="_blank" rel="noopener">qoder.com.cn/account/integrations</a> 创建个人令牌。这是 Qoder 官网令牌，不是上面的本代理密钥。
         </p>
+
+        <!-- 自动跳过策略 (Skip Strategies) -->
+        <div class="skip-strategies-card">
+          <div class="skip-strategies-header">
+            <div class="skip-strategies-title">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              </svg>
+              自动跳过策略
+            </div>
+          </div>
+          <div class="skip-strategies-grid">
+            <div class="strategy-item">
+              <label class="toggle-control" for="auto-mark-quota-toggle">
+                <input type="checkbox" id="auto-mark-quota-toggle" class="toggle-checkbox">
+                <span class="toggle-slider"></span>
+                <span class="toggle-label">额度耗尽后自动标记并跳过</span>
+              </label>
+              <div class="field-hint">
+                关闭后，即便通用额度归零也不会跳过该账号（适合仍有 Qwen 等专属免费额度的情况）。开启时通用额度耗尽将跳过。
+              </div>
+            </div>
+
+            <div class="strategy-item">
+              <label class="toggle-control" for="auto-mark-auth-toggle">
+                <input type="checkbox" id="auto-mark-auth-toggle" class="toggle-checkbox" checked>
+                <span class="toggle-slider"></span>
+                <span class="toggle-label">登录失效后自动标记并跳过</span>
+              </label>
+              <div class="field-hint">
+                当账号凭证过期或被拒绝时，自动标记并跳过，避免无效调用阻塞请求。
+              </div>
+            </div>
+          </div>
+        </div>
+
         <p class="field-hint" style="margin-top: 6px;">
-          额度耗尽或登录失效会自动跳过该号；点标记或「清除标记」后重新进入轮询。账号保存在项目 <code>data/accounts.json</code>。导出文件含登录凭证，不要发到公开地方。
+          自动跳过遵循上述两个策略开关；通用积分耗尽后 Qwen 等专属额度可能仍可使用。点标记或「清除标记」后重新进入轮询。账号保存在项目 <code>data/accounts.json</code>。导出文件含登录凭证，不要发到公开地方。
         </p>
       </div>
       <div class="panel-body" style="padding: 0;">

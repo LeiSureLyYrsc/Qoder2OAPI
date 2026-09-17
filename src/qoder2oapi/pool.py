@@ -1,6 +1,7 @@
 import asyncio
 from typing import Any
 from qoder2oapi.models import AccountRecord
+from qoder2oapi.runtime_settings import runtime_settings
 from qoder2oapi.token_store import token_store
 
 
@@ -31,7 +32,8 @@ class AccountPool:
     def mark_skip_quota(self, account_id: str, error: str = "") -> None:
         acc = token_store.get(account_id)
         if acc:
-            acc.skip_quota = True
+            if runtime_settings.auto_mark_quota:
+                acc.skip_quota = True
             if error:
                 acc.last_error = error
             token_store.upsert(acc)
@@ -39,7 +41,8 @@ class AccountPool:
     def mark_skip_auth(self, account_id: str, error: str = "") -> None:
         acc = token_store.get(account_id)
         if acc:
-            acc.skip_auth = True
+            if runtime_settings.auto_mark_auth:
+                acc.skip_auth = True
             if error:
                 acc.last_error = error
             token_store.upsert(acc)
@@ -60,9 +63,32 @@ class AccountPool:
             acc.skip_quota = skip_quota
         if skip_auth is not None:
             acc.skip_auth = skip_auth
-        if skip_quota is False and skip_auth is False:
+        if not acc.skip_quota and not acc.skip_auth:
             acc.last_error = ""
         return token_store.upsert(acc)
+
+    def on_settings_changed(
+        self,
+        prev_quota: bool,
+        new_quota: bool,
+        prev_auth: bool,
+        new_auth: bool,
+    ) -> None:
+        if (prev_quota and not new_quota) or (prev_auth and not new_auth):
+            accounts = token_store.list_accounts()
+            for acc in accounts:
+                changed = False
+                if prev_quota and not new_quota and acc.skip_quota:
+                    acc.skip_quota = False
+                    changed = True
+                if prev_auth and not new_auth and acc.skip_auth:
+                    acc.skip_auth = False
+                    changed = True
+                if not acc.skip_quota and not acc.skip_auth and acc.last_error:
+                    acc.last_error = ""
+                    changed = True
+                if changed:
+                    token_store.upsert(acc)
 
     def counts(self) -> dict[str, int]:
         accounts = token_store.list_accounts()

@@ -201,3 +201,104 @@ async def test_pat_quota_retry_500_does_not_mark_auth_failed(monkeypatch):
     saved = ts_mod.token_store.get(acc.id)
     assert saved is not None
     assert saved.skip_auth is False
+
+
+def test_quota_dedicated_packages_parsing_and_remaining():
+    fixture = {
+        "userId": "user-test-uuid",
+        "userType": "personal_professional",
+        "isQuotaExceeded": True,
+        "expiresAt": 1790007348608,
+        "userQuota": {
+            "total": 1000,
+            "used": 1000,
+            "remaining": 0,
+        },
+        "addOnQuota": {
+            "total": 0,
+            "used": 0,
+            "remaining": 0,
+        },
+        "dedicatedResourcePackages": [
+            {
+                "packageName": "Qwen-Dedicated",
+                "total": 500,
+                "used": 100,
+                "remaining": 400,
+                "available": True,
+                "status": "active",
+            },
+            {
+                "packageName": "Expired-Pkg",
+                "total": 200,
+                "used": 200,
+                "remaining": 0,
+                "available": True,
+                "status": "expired",
+            },
+        ],
+    }
+
+    parsed = parse_quota_data(fixture)
+    assert len(parsed["dedicated_resource_packages"]) == 2
+    # Normal user_quota is 0, add_on is 0, but active dedicated package has 400
+    assert remaining_credits(parsed) == 400
+    # Normal credits 0 + Qwen dedicated > 0 => account_exceeded is False!
+    assert account_exceeded(parsed) is False
+    assert parsed["total_usage"] == 1000 + 0 + (100 + 200)  # 1300
+    assert parsed["hard_limit"] == 1000 + 0 + (500 + 200)  # 1700
+
+
+@pytest.mark.asyncio
+async def test_aggregate_quota_includes_dedicated_packages(monkeypatch):
+    acc1 = AccountRecord(
+        id="acc-pkg-1",
+        kind="oauth",
+        access_token="tok-pkg-1",
+        user_id="u-pkg-1",
+        machine_id="m-pkg-1",
+        expires_at=1000,
+    )
+    ts_mod.token_store.save_all([acc1])
+
+    class MockResp:
+        def __init__(self):
+            self.status_code = 200
+
+        def json(self):
+            return {
+                "data": {
+                    "userType": "personal",
+                    "expiresAt": 1000,
+                    "userQuota": {"total": 100, "used": 100, "remaining": 0},
+                    "addOnQuota": {"total": 0, "used": 0, "remaining": 0},
+                    "dedicated_resource_packages": [
+                        {
+                            "packageName": "Qwen-Package",
+                            "total": 500,
+                            "used": 50,
+                            "remaining": 450,
+                            "available": True,
+                            "status": "normal",
+                        }
+                    ],
+                }
+            }
+
+    class MockClient:
+        async def get(self, url, headers=None, **kwargs):
+            return MockResp()
+
+    from qoder2oapi import quota
+    monkeypatch.setattr(quota, "get_http_client", lambda: MockClient())
+
+    aggregated = await fetch_quota()
+    assert "dedicated_resource_packages" in aggregated
+    assert len(aggregated["dedicated_resource_packages"]) == 1
+    assert aggregated["dedicated_resource_packages"][0]["packageName"] == "Qwen-Package"
+    # Even though user_quota and add_on_quota remaining are 0, total_remaining includes package remaining so is_quota_exceeded is False
+    assert aggregated["user_quota"]["remaining"] == 0
+    assert aggregated["add_on_quota"]["remaining"] == 0
+    assert aggregated["is_quota_exceeded"] is False
+    assert len(aggregated["accounts"]) == 1
+    assert "dedicated_resource_packages" in aggregated["accounts"][0]["quota"]

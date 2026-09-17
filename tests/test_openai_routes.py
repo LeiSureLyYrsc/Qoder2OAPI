@@ -133,6 +133,77 @@ async def test_admin_export_import_and_clear_flags(test_client):
 
 
 @pytest.mark.asyncio
+async def test_admin_settings_get_and_patch_and_clear_flags(test_client):
+    from qoder2oapi.models import AccountRecord
+    import qoder2oapi.token_store as ts_mod
+
+    ts_mod.token_store.clear()
+    ts_mod.token_store.upsert(
+        AccountRecord(
+            id="acc-settings-test",
+            kind="oauth",
+            access_token="tok",
+            user_id="u1",
+            machine_id="m1",
+            skip_quota=True,
+            skip_auth=True,
+            last_error="some error",
+        )
+    )
+
+    headers = {"Authorization": f"Bearer {settings.qoder2oapi_api_key}"}
+    async with test_client as client:
+        # GET initial settings
+        resp = await client.get("/api/admin/settings", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["auto_mark_quota"] is False
+        assert data["auto_mark_auth"] is True
+
+        # Turn auto_mark_quota to True
+        resp = await client.patch(
+            "/api/admin/settings",
+            headers=headers,
+            json={"auto_mark_quota": True},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["auto_mark_quota"] is True
+        assert resp.json()["auto_mark_auth"] is True
+
+        # Now turning auto_mark_quota to False clears skip_quota on accounts
+        # Note: skip_auth is still True on acc-settings-test, so last_error remains because skip_auth is still active
+        resp = await client.patch(
+            "/api/admin/settings",
+            headers=headers,
+            json={"auto_mark_quota": False},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["auto_mark_quota"] is False
+
+        acc = ts_mod.token_store.get("acc-settings-test")
+        assert acc is not None
+        assert acc.skip_quota is False
+        assert acc.skip_auth is True
+        assert acc.last_error == "some error"
+
+        # Now turning auto_mark_auth to False clears skip_auth, and since neither skip flag remains, last_error is cleared
+        resp = await client.patch(
+            "/api/admin/settings",
+            headers=headers,
+            json={"auto_mark_auth": False},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["auto_mark_auth"] is False
+
+        acc = ts_mod.token_store.get("acc-settings-test")
+        assert acc is not None
+        assert acc.skip_auth is False
+        assert acc.skip_quota is False
+        assert acc.last_error == ""
+
+
+
+@pytest.mark.asyncio
 async def test_add_pat_refreshes_model_catalog(test_client, monkeypatch):
     from qoder2oapi.models import AccountRecord
     from qoder2oapi.routes import admin

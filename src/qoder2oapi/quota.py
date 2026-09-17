@@ -8,23 +8,58 @@ from qoder2oapi.refresh import ensure_fresh
 from qoder2oapi.token_store import token_store
 
 
+def _is_package_active(pkg: dict[str, Any]) -> bool:
+    if not isinstance(pkg, dict):
+        return False
+    # "available is not explicitly false"
+    available = pkg.get("available")
+    if available is False:
+        return False
+    # status is not an inactive/expired status
+    status = str(pkg.get("status") or "").strip().lower()
+    if status in ("inactive", "expired", "disabled", "invalid", "exhausted"):
+        return False
+    return True
+
+
 def remaining_credits(parsed: dict[str, Any]) -> float:
     user_quota = parsed.get("user_quota") or {}
     addon_quota = parsed.get("add_on_quota") or {}
     user_rem = float(user_quota.get("remaining", 0) or 0)
     addon_rem = float(addon_quota.get("remaining", 0) or 0)
-    return user_rem + addon_rem
+
+    pkg_rem = 0.0
+    packages = parsed.get("dedicated_resource_packages") or []
+    if isinstance(packages, list):
+        for pkg in packages:
+            if isinstance(pkg, dict) and _is_package_active(pkg):
+                pkg_rem += float(pkg.get("remaining", 0) or 0)
+
+    return user_rem + addon_rem + pkg_rem
 
 
 def account_exceeded(parsed: dict[str, Any]) -> bool:
+    rem = remaining_credits(parsed)
+    if rem > 0:
+        return False
     if parsed.get("is_quota_exceeded"):
         return True
-    rem = remaining_credits(parsed)
     hard_limit = float(parsed.get("hard_limit", 0) or 0)
     total_usage = float(parsed.get("total_usage", 0) or 0)
     if rem == 0 and (hard_limit > 0 or total_usage > 0):
         return True
     return False
+
+
+def _normalize_package(pkg: dict[str, Any]) -> dict[str, Any]:
+    total = float(pkg.get("total", 0) or 0)
+    used = float(pkg.get("used", 0) or 0)
+    remaining = float(pkg.get("remaining", 0) if "remaining" in pkg else (total - used))
+    normalized = dict(pkg)
+    normalized["total"] = total
+    normalized["used"] = used
+    normalized["remaining"] = remaining
+    return normalized
 
 
 def parse_quota_data(data: dict[str, Any]) -> dict[str, Any]:
@@ -33,11 +68,28 @@ def parse_quota_data(data: dict[str, Any]) -> dict[str, Any]:
 
     user_used = float(user_quota.get("used", 0) or 0)
     addon_used = float(add_on_quota.get("used", 0) or 0)
-    total_usage = user_used + addon_used
 
     user_total = float(user_quota.get("total", 0) or 0)
     addon_total = float(add_on_quota.get("total", 0) or 0)
-    hard_limit = user_total + addon_total
+
+    raw_packages = (
+        data.get("dedicatedResourcePackages")
+        or data.get("dedicated_resource_packages")
+        or []
+    )
+    dedicated_packages = []
+    packages_used = 0.0
+    packages_total = 0.0
+    if isinstance(raw_packages, list):
+        for item in raw_packages:
+            if isinstance(item, dict):
+                norm_pkg = _normalize_package(item)
+                dedicated_packages.append(norm_pkg)
+                packages_used += norm_pkg["used"]
+                packages_total += norm_pkg["total"]
+
+    total_usage = user_used + addon_used + packages_used
+    hard_limit = user_total + addon_total + packages_total
 
     expires_at = data.get("expiresAt") or data.get("expires_at") or 0
     user_type = data.get("userType") or data.get("user_type") or "unknown"
@@ -49,6 +101,7 @@ def parse_quota_data(data: dict[str, Any]) -> dict[str, Any]:
         "hard_limit": hard_limit,
         "user_quota": user_quota,
         "add_on_quota": add_on_quota,
+        "dedicated_resource_packages": dedicated_packages,
         "expires_at": expires_at,
         "user_type": user_type,
         "is_quota_exceeded": is_quota_exceeded,
@@ -111,6 +164,7 @@ async def fetch_quota() -> dict[str, Any]:
             "hard_limit": 0,
             "user_quota": {},
             "add_on_quota": {},
+            "dedicated_resource_packages": [],
             "expires_at": 0,
             "user_type": "none",
             "is_quota_exceeded": True,
@@ -126,6 +180,8 @@ async def fetch_quota() -> dict[str, Any]:
     sum_addon_total = 0.0
     sum_addon_used = 0.0
     sum_addon_remaining = 0.0
+    aggregated_packages: list[dict[str, Any]] = []
+    packages_remaining_total = 0.0
     max_expires_at = 0
     first_user_type = "unknown"
 
@@ -155,13 +211,25 @@ async def fetch_quota() -> dict[str, Any]:
             sum_addon_total += float(aq.get("total", 0) or 0)
             sum_addon_used += float(aq.get("used", 0) or 0)
             sum_addon_remaining += float(aq.get("remaining", 0) or 0)
+
+            pkgs = res.get("dedicated_resource_packages") or []
+            if isinstance(pkgs, list):
+                for pkg in pkgs:
+                    if isinstance(pkg, dict):
+                        aggregated_packages.append(pkg)
+                        if _is_package_active(pkg):
+                            packages_remaining_total += float(pkg.get("remaining", 0) or 0)
+
             max_expires_at = max(max_expires_at, int(res.get("expires_at", 0) or 0))
             if first_user_type == "unknown":
                 first_user_type = res.get("user_type", "unknown")
 
-    total_usage = sum_user_used + sum_addon_used
-    hard_limit = sum_user_total + sum_addon_total
-    total_remaining = sum_user_remaining + sum_addon_remaining
+    packages_total = sum(float(p.get("total", 0) or 0) for p in aggregated_packages)
+    packages_used = sum(float(p.get("used", 0) or 0) for p in aggregated_packages)
+
+    total_usage = sum_user_used + sum_addon_used + packages_used
+    hard_limit = sum_user_total + sum_addon_total + packages_total
+    total_remaining = sum_user_remaining + sum_addon_remaining + packages_remaining_total
 
     usable_count = len(pool.peek_usable())
     is_quota_exceeded = usable_count == 0 or total_remaining <= 0
@@ -182,6 +250,7 @@ async def fetch_quota() -> dict[str, Any]:
             "used": sum_addon_used,
             "remaining": sum_addon_remaining,
         },
+        "dedicated_resource_packages": aggregated_packages,
         "expires_at": max_expires_at,
         "user_type": user_type,
         "is_quota_exceeded": is_quota_exceeded,

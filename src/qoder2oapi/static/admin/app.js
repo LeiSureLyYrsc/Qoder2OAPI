@@ -11,6 +11,7 @@ let state = {
   quota: null,
   accounts: [],
   models: [],
+  runtimeSettings: null,
   pollingTimer: null,
   pollStartTime: 0,
 };
@@ -103,7 +104,70 @@ function showDashboard() {
   document.getElementById('main-dashboard').classList.remove('hidden');
 }
 
-// --- Status & Bootstrap ---
+// --- Account Operations ---
+async function patchAccount(id, body) {
+  const resp = await api(`/api/admin/accounts/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    throw new Error(data.detail || `HTTP ${resp.status}`);
+  }
+  return data;
+}
+
+// --- Runtime Settings ---
+async function loadRuntimeSettings() {
+  const quotaToggle = document.getElementById('auto-mark-quota-toggle');
+  const authToggle = document.getElementById('auto-mark-auth-toggle');
+
+  try {
+    const resp = await api('/api/admin/settings');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    state.runtimeSettings = data;
+
+    if (quotaToggle) {
+      quotaToggle.checked = Boolean(data.auto_mark_quota);
+      quotaToggle.disabled = false;
+    }
+    if (authToggle) {
+      authToggle.checked = Boolean(data.auto_mark_auth);
+      authToggle.disabled = false;
+    }
+  } catch (err) {
+    if (err.message === 'UNAUTHORIZED') return;
+    showToast(`获取设置失败: ${err.message}`, 'error');
+  }
+}
+
+async function updateRuntimeSetting(key, value, toggleElem) {
+  if (!toggleElem) return;
+  const prevValue = !value;
+  toggleElem.disabled = true;
+
+  try {
+    const resp = await api('/api/admin/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({ [key]: value }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(data.detail || `HTTP ${resp.status}`);
+    }
+    state.runtimeSettings = data;
+    toggleElem.checked = Boolean(data[key]);
+    showToast('策略设置已保存', 'success');
+    await checkAuthAndLoad();
+  } catch (err) {
+    toggleElem.checked = prevValue;
+    showToast(`保存设置失败: ${err.message}`, 'error');
+  } finally {
+    toggleElem.disabled = false;
+  }
+}
+
 async function checkAuthAndLoad() {
   const currentKey = localStorage.getItem(STORAGE_KEY);
   if (!currentKey) {
@@ -120,6 +184,7 @@ async function checkAuthAndLoad() {
     state.status = data;
     showDashboard();
     renderStatusSection();
+    loadRuntimeSettings();
     loadAccounts();
     loadQuota();
     loadModels();
@@ -204,7 +269,10 @@ async function loadQuota() {
     // 2. 加量包额度 (add_on_quota)
     renderQuotaBar('addon', data.add_on_quota);
 
-    // 3. 汇总信息
+    // 3. 专属额度 (dedicated_resource_packages)
+    renderDedicatedPackages(data.dedicated_resource_packages);
+
+    // 4. 汇总信息
     document.getElementById('quota-user-type').textContent = formatQuotaSource(data.user_type);
     document.getElementById('quota-expiry').textContent = formatDate(data.expires_at);
 
@@ -237,6 +305,85 @@ function formatQuotaSource(userType) {
 
 function formatAccountKind(kind) {
   return kind === 'pat' ? '官网令牌' : '浏览器登录';
+}
+
+function formatDedicatedPackageTitle(pkg) {
+  if (!pkg) return '专属资源包';
+  if (Array.isArray(pkg.displayLabels)) {
+    const titleLabel = pkg.displayLabels.find((item) => item && item.dimension === 'title');
+    if (titleLabel) {
+      const i18n = titleLabel.valueI18n || titleLabel.value_i18n || {};
+      return i18n['zh-CN'] || i18n['zh_CN'] || titleLabel.value || '专属资源包';
+    }
+  }
+  if (pkg.displayLabels && typeof pkg.displayLabels === 'object') {
+    if (pkg.displayLabels['zh-CN']) return pkg.displayLabels['zh-CN'];
+    if (pkg.displayLabels.title) return pkg.displayLabels.title;
+    if (pkg.displayLabels.value) return pkg.displayLabels.value;
+  }
+  if (pkg.display_labels && typeof pkg.display_labels === 'object') {
+    if (pkg.display_labels['zh-CN']) return pkg.display_labels['zh-CN'];
+    if (pkg.display_labels.title) return pkg.display_labels.title;
+    if (pkg.display_labels.value) return pkg.display_labels.value;
+  }
+  if (pkg.name) return pkg.name;
+  if (pkg.title) return pkg.title;
+  if (pkg.description) return pkg.description;
+  return '专属资源包';
+}
+
+function renderDedicatedPackages(packages) {
+  const block = document.getElementById('quota-dedicated-block');
+  const list = document.getElementById('quota-dedicated-list');
+  const nums = document.getElementById('quota-dedicated-nums');
+  if (!block || !list) return;
+
+  if (!packages || !Array.isArray(packages) || packages.length === 0) {
+    block.classList.add('hidden');
+    list.innerHTML = '';
+    if (nums) nums.innerHTML = '';
+    return;
+  }
+
+  block.classList.remove('hidden');
+  if (nums) {
+    nums.textContent = `${packages.length} 个资源包`;
+  }
+
+  list.innerHTML = packages.map((pkg) => {
+    const title = formatDedicatedPackageTitle(pkg);
+    const total = Number(pkg.total || 0);
+    const used = Number(pkg.used || 0);
+    const remaining = Number(
+      pkg.remaining !== undefined
+        ? pkg.remaining
+        : Math.max(0, total - used)
+    );
+    const unit = pkg.unit || '积分';
+    const expiresAt = pkg.expiresAt || pkg.expires_at || pkg.expire_time;
+    const expiryText = expiresAt ? formatDate(expiresAt) : '';
+    const desc = pkg.description && pkg.description !== title ? pkg.description : '';
+
+    return `
+      <div class="dedicated-package-card">
+        <div class="dedicated-pkg-header">
+          <span class="dedicated-pkg-title">
+            <span class="dot dot-blue"></span>
+            ${title}
+          </span>
+          <span class="dedicated-pkg-nums tabular-nums">
+            剩余 <strong>${formatNumber(remaining)}</strong>${total > 0 ? ` / 总计 ${formatNumber(total)}` : ''} ${unit}
+          </span>
+        </div>
+        ${(desc || expiryText) ? `
+          <div class="dedicated-pkg-meta">
+            <span class="dedicated-pkg-desc" title="${desc}">${desc}</span>
+            ${expiryText ? `<span>到期: ${expiryText}</span>` : ''}
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }).join('');
 }
 
 function formatThinkingLevel(level) {
@@ -887,6 +1034,21 @@ function setupEventListeners() {
   const quotaLinesEl = document.getElementById('quota-account-lines');
   if (quotaLinesEl) {
     quotaLinesEl.addEventListener('click', onQuotaAccountLinesClick);
+  }
+
+  // Runtime settings toggles
+  const quotaToggle = document.getElementById('auto-mark-quota-toggle');
+  if (quotaToggle) {
+    quotaToggle.addEventListener('change', (e) => {
+      updateRuntimeSetting('auto_mark_quota', e.target.checked, quotaToggle);
+    });
+  }
+
+  const authToggle = document.getElementById('auto-mark-auth-toggle');
+  if (authToggle) {
+    authToggle.addEventListener('change', (e) => {
+      updateRuntimeSetting('auto_mark_auth', e.target.checked, authToggle);
+    });
   }
 
   // Export and Import

@@ -20,7 +20,7 @@ uv run qoder2oapi
 
 PAT 不是本代理的 API Key。PAT 会兑换成短命 job token；过期后自动 `jobToken/refresh`，失败再重新兑换。OAuth 账号不自动刷新，失效后需重新登录。
 
-请求按号池轮询。额度耗尽或登录失效会自动打标并跳过；控制台点标记或「清除标记」后重新进入轮询。号池明文保存在项目 `data/accounts.json`，控制台可导出/导入（合并或整池替换）。导出文件含登录凭证，不要发到公开地方。`/v1/dashboard/billing/usage` 的 credits 是号池合计。
+请求按号池轮询。控制台可分别配置“额度耗尽”和“登录失效”的自动标记策略；额度自动标记默认关闭，避免通用积分归零时误跳过仍有 Qwen 专属积分的账号。点标记或「清除标记」后可重新进入轮询。设置保存在 `data/settings.json`，号池明文保存在 `data/accounts.json`，控制台可导出/导入（合并或整池替换）。导出文件含登录凭证，不要发到公开地方。`/v1/dashboard/billing/usage` 的 credits 是号池合计，并单独返回专属资源包。
 
 ## 调用
 

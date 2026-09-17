@@ -23,10 +23,17 @@ EXPORT_FIELDS = (
     "skip_auth",
 )
 
+STORAGE_FIELDS = EXPORT_FIELDS + ("last_error",)
+
 
 def account_to_config(account: AccountRecord) -> dict[str, Any]:
     data = account.model_dump()
     return {field: data.get(field, "" if field != "expires_at" else 0) for field in EXPORT_FIELDS}
+
+
+def account_to_storage(account: AccountRecord) -> dict[str, Any]:
+    data = account.model_dump()
+    return {field: data.get(field, "" if field != "expires_at" else 0) for field in STORAGE_FIELDS}
 
 
 def parse_account_payload(raw: Any) -> AccountRecord | None:
@@ -66,6 +73,7 @@ def parse_account_payload(raw: Any) -> AccountRecord | None:
         enabled=bool(raw.get("enabled", True)),
         skip_quota=bool(raw.get("skip_quota") or raw.get("skipQuota", False)),
         skip_auth=bool(raw.get("skip_auth") or raw.get("skipAuth", False)),
+        last_error=str(raw.get("last_error") or raw.get("lastError") or ""),
     )
 
 
@@ -101,7 +109,7 @@ class TokenStore:
     def save_all(self, accounts: list[AccountRecord]) -> None:
         payload = {
             "version": 1,
-            "accounts": [account_to_config(acc) for acc in accounts],
+            "accounts": [account_to_storage(acc) for acc in accounts],
         }
         self.accounts_file.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n",

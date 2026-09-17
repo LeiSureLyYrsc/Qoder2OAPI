@@ -12,6 +12,7 @@ from qoder2oapi.oauth import poll_device_flow, start_device_flow
 from qoder2oapi.pool import pool
 from qoder2oapi.quota import fetch_quota
 from qoder2oapi.refresh import ensure_fresh, exchange_pat
+from qoder2oapi.runtime_settings import runtime_settings
 from qoder2oapi.token_store import token_store
 
 router = APIRouter(prefix="/api/admin", dependencies=[Depends(verify_api_key)])
@@ -23,6 +24,11 @@ class RotateKeyResponse(BaseModel):
 
 class PatLoginRequest(BaseModel):
     pat: str
+
+
+class UpdateSettingsRequest(BaseModel):
+    auto_mark_quota: bool | None = None
+    auto_mark_auth: bool | None = None
 
 
 class UpdateAccountRequest(BaseModel):
@@ -44,6 +50,25 @@ async def admin_login_start() -> dict[str, str]:
 @router.get("/login/poll")
 async def admin_login_poll(login_id: str) -> dict[str, Any]:
     return await poll_device_flow(login_id)
+
+
+@router.get("/settings")
+async def get_runtime_settings() -> dict[str, Any]:
+    return runtime_settings.get_settings()
+
+
+@router.patch("/settings")
+async def update_runtime_settings(body: UpdateSettingsRequest) -> dict[str, Any]:
+    prev_quota = runtime_settings.auto_mark_quota
+    prev_auth = runtime_settings.auto_mark_auth
+    updated = runtime_settings.update(
+        auto_mark_quota=body.auto_mark_quota,
+        auto_mark_auth=body.auto_mark_auth,
+    )
+    new_quota = runtime_settings.auto_mark_quota
+    new_auth = runtime_settings.auto_mark_auth
+    pool.on_settings_changed(prev_quota, new_quota, prev_auth, new_auth)
+    return updated
 
 
 @router.get("/status")

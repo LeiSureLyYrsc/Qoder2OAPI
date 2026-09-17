@@ -104,7 +104,7 @@ def test_accounts_json_round_trip():
     assert "pt-secret" in text
     assert "tok-1" in text
     assert "quota_snapshot" not in text
-    assert "last_error" not in text
+    assert '"last_error": "quota"' in text
 
     payload = ts_mod.token_store.export_payload()
     assert payload["version"] == 1
@@ -215,3 +215,67 @@ def test_clear_flags_is_idempotent():
     assert again is not None
     assert again.skip_quota is False
     assert again.skip_auth is False
+
+
+def test_runtime_settings_defaults_persistence_corrupt_fallback(tmp_path):
+    from qoder2oapi.runtime_settings import RuntimeSettings
+
+    data_dir = tmp_path / "custom_data"
+    rs = RuntimeSettings(data_dir=data_dir)
+    assert rs.version == 1
+    assert rs.auto_mark_quota is False
+    assert rs.auto_mark_auth is True
+
+    rs.update(auto_mark_quota=True, auto_mark_auth=False)
+    assert rs.auto_mark_quota is True
+    assert rs.auto_mark_auth is False
+
+    rs2 = RuntimeSettings(data_dir=data_dir)
+    assert rs2.auto_mark_quota is True
+    assert rs2.auto_mark_auth is False
+
+    # Corrupt settings file fallback
+    settings_file = data_dir / "settings.json"
+    settings_file.write_text("invalid json content!", encoding="utf-8")
+    rs3 = RuntimeSettings(data_dir=data_dir)
+    assert rs3.auto_mark_quota is False
+    assert rs3.auto_mark_auth is True
+
+
+def test_mark_skip_gates():
+    from qoder2oapi.runtime_settings import runtime_settings
+
+    ts_mod.token_store.clear()
+    acc = _acc(id="gate-test", skip_quota=False, skip_auth=False, last_error="")
+    ts_mod.token_store.upsert(acc)
+
+    # Defaults: auto_mark_quota is False, auto_mark_auth is True
+    assert runtime_settings.auto_mark_quota is False
+    assert runtime_settings.auto_mark_auth is True
+
+    pool.mark_skip_quota("gate-test", error="Quota exceeded 429")
+    saved = ts_mod.token_store.get("gate-test")
+    assert saved is not None
+    assert saved.skip_quota is False
+    assert saved.last_error == "Quota exceeded 429"
+
+    pool.mark_skip_auth("gate-test", error="Auth 401")
+    saved = ts_mod.token_store.get("gate-test")
+    assert saved is not None
+    assert saved.skip_auth is True
+    assert saved.last_error == "Auth 401"
+
+    # Enable auto_mark_quota and disable auto_mark_auth
+    runtime_settings.update(auto_mark_quota=True, auto_mark_auth=False)
+    pool.update_flags("gate-test", skip_quota=False, skip_auth=False)
+
+    pool.mark_skip_quota("gate-test", error="Quota exceeded again")
+    saved = ts_mod.token_store.get("gate-test")
+    assert saved.skip_quota is True
+    assert saved.last_error == "Quota exceeded again"
+
+    pool.mark_skip_auth("gate-test", error="Auth 403")
+    saved = ts_mod.token_store.get("gate-test")
+    # skip_auth remained False because auto_mark_auth is False
+    assert saved.skip_auth is False
+    assert saved.last_error == "Auth 403"
