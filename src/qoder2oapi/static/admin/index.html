@@ -228,7 +228,7 @@
           在 <a href="https://qoder.com.cn/account/integrations" target="_blank" rel="noopener">qoder.com.cn/account/integrations</a> 创建个人令牌。这是 Qoder 官网令牌，不是上面的本代理密钥。
         </p>
 
-        <!-- 自动跳过策略 (Skip Strategies) -->
+        <!-- 自动跳过与每日领取策略 (Skip & Checkin Strategies) -->
         <div class="skip-strategies-card">
           <div class="skip-strategies-header">
             <div class="skip-strategies-title">
@@ -236,7 +236,10 @@
                 <circle cx="12" cy="12" r="3"></circle>
                 <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
               </svg>
-              自动跳过策略
+              账号池策略与自动任务
+            </div>
+            <div class="checkin-quick-actions">
+              <button id="trigger-all-checkin-btn" class="btn btn-sm btn-primary" title="立即为池内所有有效账号领取 100 Credits">全部领取</button>
             </div>
           </div>
           <div class="skip-strategies-grid">
@@ -261,6 +264,34 @@
                 当账号凭证过期或被拒绝时，自动标记并跳过，避免无效调用阻塞请求。
               </div>
             </div>
+
+            <div class="strategy-item strategy-item-full">
+              <div class="checkin-setting-header">
+                <label class="toggle-control" for="auto-checkin-toggle">
+                  <input type="checkbox" id="auto-checkin-toggle" class="toggle-checkbox">
+                  <span class="toggle-slider"></span>
+                  <span class="toggle-label">每日领取 100 Credits</span>
+                </label>
+                <div class="checkin-time-box">
+                  <span class="checkin-time-label">执行时间 (UTC+8 / 北京时间)</span>
+                  <input type="time" id="checkin-time-input" class="input-control checkin-time-input" value="10:05">
+                  <button id="save-checkin-time-btn" class="btn btn-sm">保存时间</button>
+                </div>
+              </div>
+              <div class="checkin-status-bar">
+                <div class="checkin-status-item">
+                  <span class="checkin-status-label">下次运行:</span>
+                  <span id="checkin-next-run" class="checkin-status-value tabular-nums">计算中…</span>
+                </div>
+                <div class="checkin-status-item">
+                  <span class="checkin-status-label">最近结果:</span>
+                  <span id="checkin-last-summary" class="checkin-status-value">暂无记录</span>
+                </div>
+              </div>
+              <div class="field-hint">
+                每日定时为池内所有账号自动执行签到领取 100 积分奖励。支持单独手动领取或立即全部领取。
+              </div>
+            </div>
           </div>
         </div>
 
@@ -276,6 +307,7 @@
                 <th>类型</th>
                 <th>账号</th>
                 <th>剩余积分</th>
+                <th>签到状态</th>
                 <th>登录到期</th>
                 <th>启用</th>
                 <th>标记</th>
@@ -284,7 +316,7 @@
             </thead>
             <tbody id="accounts-table-body">
               <tr>
-                <td colspan="7" style="text-align: center; padding: 24px; color: var(--text-dim);">
+                <td colspan="8" style="text-align: center; padding: 24px; color: var(--text-dim);">
                   还没有账号。用右上角登录，或粘贴官网个人令牌。
                 </td>
               </tr>

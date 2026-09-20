@@ -8,3 +8,5 @@ build/
 data/
 .env
 .python-version
+/tests
+/tests

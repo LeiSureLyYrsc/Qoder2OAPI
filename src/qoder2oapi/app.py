@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from qoder2oapi.catalog import catalog_manager
+from qoder2oapi.checkin import checkin_scheduler
 from qoder2oapi.config import settings
 from qoder2oapi.http import close_http_client
 from qoder2oapi.refresh import ensure_fresh
@@ -36,6 +37,7 @@ async def _background_pat_refresh_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     refresh_task = asyncio.create_task(_background_pat_refresh_loop())
+    checkin_scheduler.start()
     try:
         await catalog_manager.fetch_models()
     except Exception:
@@ -43,6 +45,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        checkin_scheduler.stop()
         refresh_task.cancel()
         try:
             await refresh_task
