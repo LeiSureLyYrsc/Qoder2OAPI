@@ -23,7 +23,7 @@ EXPORT_FIELDS = (
     "skip_auth",
 )
 
-STORAGE_FIELDS = EXPORT_FIELDS + ("last_error", "checkin")
+STORAGE_FIELDS = EXPORT_FIELDS + ("last_error",)
 
 
 def account_to_config(account: AccountRecord) -> dict[str, Any]:
@@ -33,15 +33,7 @@ def account_to_config(account: AccountRecord) -> dict[str, Any]:
 
 def account_to_storage(account: AccountRecord) -> dict[str, Any]:
     data = account.model_dump()
-    res = {}
-    for field in STORAGE_FIELDS:
-        if field == "expires_at":
-            res[field] = data.get(field, 0)
-        elif field == "checkin":
-            res[field] = data.get(field) or {}
-        else:
-            res[field] = data.get(field, "")
-    return res
+    return {field: data.get(field, "" if field != "expires_at" else 0) for field in STORAGE_FIELDS}
 
 
 def parse_account_payload(raw: Any) -> AccountRecord | None:
@@ -67,8 +59,6 @@ def parse_account_payload(raw: Any) -> AccountRecord | None:
     refresh_token = str(raw.get("refresh_token") or raw.get("refreshToken") or "")
     if refresh_token == "***":
         refresh_token = ""
-    raw_checkin = raw.get("checkin")
-    checkin = raw_checkin if isinstance(raw_checkin, dict) else {}
     return AccountRecord(
         id=account_id,
         kind=kind,
@@ -83,7 +73,6 @@ def parse_account_payload(raw: Any) -> AccountRecord | None:
         enabled=bool(raw.get("enabled", True)),
         skip_quota=bool(raw.get("skip_quota") or raw.get("skipQuota", False)),
         skip_auth=bool(raw.get("skip_auth") or raw.get("skipAuth", False)),
-        checkin=checkin,
         last_error=str(raw.get("last_error") or raw.get("lastError") or ""),
     )
 
@@ -93,7 +82,6 @@ class TokenStore:
         self.data_dir = data_dir or data_dir_path
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.accounts_file = self.data_dir / "accounts.json"
-        self._memory_accounts: dict[str, AccountRecord] = {}
 
     def list_accounts(self) -> list[AccountRecord]:
         if not self.accounts_file.exists():
@@ -109,8 +97,6 @@ class TokenStore:
         for item in items:
             parsed = parse_account_payload(item)
             if parsed:
-                if parsed.id in self._memory_accounts:
-                    parsed.quota_snapshot = self._memory_accounts[parsed.id].quota_snapshot
                 accounts.append(parsed)
         return accounts
 
@@ -156,12 +142,10 @@ class TokenStore:
         else:
             accounts.append(account)
 
-        self._memory_accounts[account.id] = account
         self.save_all(accounts)
         return account
 
     def delete(self, account_id: str) -> bool:
-        self._memory_accounts.pop(account_id, None)
         accounts = self.list_accounts()
         new_list = [acc for acc in accounts if acc.id != account_id]
         if len(new_list) == len(accounts):

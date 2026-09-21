@@ -109,9 +109,6 @@ def parse_quota_data(data: dict[str, Any]) -> dict[str, Any]:
 
 
 async def fetch_quota_for_account(account: AccountRecord) -> dict[str, Any]:
-    from qoder2oapi.token_store import token_store
-    from qoder2oapi.pool import pool
-
     if account.kind == "pat":
         account = await ensure_fresh(account)
         if account.skip_auth:

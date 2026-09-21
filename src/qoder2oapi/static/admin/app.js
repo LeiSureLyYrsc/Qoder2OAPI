@@ -12,7 +12,6 @@ let state = {
   accounts: [],
   models: [],
   runtimeSettings: null,
-  checkinState: null,
   pollingTimer: null,
   pollStartTime: 0,
 };
@@ -118,12 +117,10 @@ async function patchAccount(id, body) {
   return data;
 }
 
-// --- Runtime Settings & Checkin ---
+// --- Runtime Settings ---
 async function loadRuntimeSettings() {
   const quotaToggle = document.getElementById('auto-mark-quota-toggle');
   const authToggle = document.getElementById('auto-mark-auth-toggle');
-  const checkinToggle = document.getElementById('auto-checkin-toggle');
-  const checkinTimeInput = document.getElementById('checkin-time-input');
 
   try {
     const resp = await api('/api/admin/settings');
@@ -138,14 +135,6 @@ async function loadRuntimeSettings() {
     if (authToggle) {
       authToggle.checked = Boolean(data.auto_mark_auth);
       authToggle.disabled = false;
-    }
-    if (checkinToggle) {
-      checkinToggle.checked = data.auto_checkin !== undefined ? Boolean(data.auto_checkin) : true;
-      checkinToggle.disabled = false;
-    }
-    if (checkinTimeInput && data.checkin_time) {
-      checkinTimeInput.value = data.checkin_time;
-      checkinTimeInput.disabled = false;
     }
   } catch (err) {
     if (err.message === 'UNAUTHORIZED') return;
@@ -170,159 +159,12 @@ async function updateRuntimeSetting(key, value, toggleElem) {
     state.runtimeSettings = data;
     toggleElem.checked = Boolean(data[key]);
     showToast('策略设置已保存', 'success');
-    await loadCheckinOverview();
+    await checkAuthAndLoad();
   } catch (err) {
     toggleElem.checked = prevValue;
     showToast(`保存设置失败: ${err.message}`, 'error');
   } finally {
     toggleElem.disabled = false;
-  }
-}
-
-async function saveCheckinTime() {
-  const timeInput = document.getElementById('checkin-time-input');
-  const saveBtn = document.getElementById('save-checkin-time-btn');
-  if (!timeInput) return;
-
-  const timeVal = (timeInput.value || '').trim();
-  const timePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
-  if (!timePattern.test(timeVal)) {
-    showToast('请输入有效的时间格式 (HH:MM)', 'error');
-    return;
-  }
-
-  if (saveBtn) saveBtn.disabled = true;
-  try {
-    const resp = await api('/api/admin/settings', {
-      method: 'PATCH',
-      body: JSON.stringify({ checkin_time: timeVal }),
-    });
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) {
-      throw new Error(data.detail || `HTTP ${resp.status}`);
-    }
-    state.runtimeSettings = data;
-    showToast(`签到时间已更新为 ${timeVal} (UTC+8)`, 'success');
-    await loadCheckinOverview();
-  } catch (err) {
-    showToast(`保存时间失败: ${err.message}`, 'error');
-  } finally {
-    if (saveBtn) saveBtn.disabled = false;
-  }
-}
-
-async function loadCheckinOverview() {
-  const nextRunEl = document.getElementById('checkin-next-run');
-  const lastSummaryEl = document.getElementById('checkin-last-summary');
-  const checkinToggle = document.getElementById('auto-checkin-toggle');
-  const checkinTimeInput = document.getElementById('checkin-time-input');
-
-  try {
-    const resp = await api('/api/admin/checkin');
-    if (!resp.ok) return;
-    const data = await resp.json();
-    state.checkinState = data;
-
-    if (checkinToggle && data.auto_checkin !== undefined) {
-      checkinToggle.checked = Boolean(data.auto_checkin);
-    }
-    if (checkinTimeInput && data.checkin_time) {
-      checkinTimeInput.value = data.checkin_time;
-    }
-
-    if (nextRunEl) {
-      if (data.auto_checkin === false) {
-        nextRunEl.textContent = '已暂停自动执行';
-      } else if (data.next_run_at) {
-        nextRunEl.textContent = formatDate(data.next_run_at);
-      } else if (checkinTimeInput && checkinTimeInput.value) {
-        nextRunEl.textContent = `每日 ${checkinTimeInput.value} (UTC+8)`;
-      } else {
-        nextRunEl.textContent = '每日 10:05 (UTC+8)';
-      }
-    }
-
-    if (lastSummaryEl) {
-      const summary = data.last_run_summary;
-      if (summary) {
-        const successCount = summary.success ?? 0;
-        const totalCount = summary.total ?? (summary.target_count ?? 0);
-        const alreadyCount = summary.already ?? 0;
-        const failedCount = summary.failed ?? 0;
-        const timeStr = data.last_run_at ? formatDate(data.last_run_at) : '';
-
-        let detailParts = [];
-        if (successCount > 0) detailParts.push(`成功 ${successCount}`);
-        if (alreadyCount > 0) detailParts.push(`已领 ${alreadyCount}`);
-        if (failedCount > 0) detailParts.push(`失败 ${failedCount}`);
-        const detailStr = detailParts.length ? `(${detailParts.join(' / ')})` : '';
-
-        lastSummaryEl.textContent = `${timeStr ? `${timeStr} ` : ''}处理 ${totalCount} 账号 ${detailStr}`;
-      } else if (data.last_run_at) {
-        lastSummaryEl.textContent = `上次执行: ${formatDate(data.last_run_at)}`;
-      } else {
-        lastSummaryEl.textContent = '暂无记录';
-      }
-    }
-  } catch (err) {
-    if (err.message === 'UNAUTHORIZED') return;
-  }
-}
-
-async function triggerAllCheckin() {
-  const btn = document.getElementById('trigger-all-checkin-btn');
-  if (btn) btn.disabled = true;
-
-  try {
-    showToast('正在触发全部账号签到…', 'info');
-    const resp = await api('/api/admin/checkin', { method: 'POST' });
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) {
-      throw new Error(data.detail || `HTTP ${resp.status}`);
-    }
-
-    let msg = '全部签到已完成';
-    if (data.message) {
-      msg = data.message;
-    } else if (data.success !== undefined || data.total !== undefined) {
-      const succ = data.success ?? 0;
-      const alr = data.already ?? 0;
-      const fail = data.failed ?? 0;
-      msg = `签到完成：成功 ${succ}，已领 ${alr}，失败 ${fail}`;
-    }
-    showToast(msg, 'success', 5000);
-    await checkAuthAndLoad();
-  } catch (err) {
-    showToast(`签到失败: ${err.message}`, 'error');
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
-
-async function triggerAccountCheckin(id, triggerBtn) {
-  if (triggerBtn) triggerBtn.disabled = true;
-
-  try {
-    showToast('正在为账号领取 100 Credits…', 'info');
-    const resp = await api(`/api/admin/accounts/${encodeURIComponent(id)}/checkin`, { method: 'POST' });
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) {
-      throw new Error(data.detail || `HTTP ${resp.status}`);
-    }
-
-    const resObj = data.result || {};
-    let msg = '签到成功，已领取 100 Credits';
-    if (resObj.status === 'already') {
-      msg = '今日已领取或暂无可领活动';
-    } else if (resObj.status === 'failed') {
-      msg = `领取失败: ${resObj.error || '未知错误'}`;
-    }
-    showToast(msg, resObj.status === 'failed' ? 'error' : 'success');
-    await checkAuthAndLoad();
-  } catch (err) {
-    showToast(`领取失败: ${err.message}`, 'error');
-  } finally {
-    if (triggerBtn) triggerBtn.disabled = false;
   }
 }
 
@@ -343,7 +185,6 @@ async function checkAuthAndLoad() {
     showDashboard();
     renderStatusSection();
     loadRuntimeSettings();
-    loadCheckinOverview();
     loadAccounts();
     loadQuota();
     loadModels();
@@ -771,32 +612,6 @@ function pollOAuthStatus(loginId) {
   }, 2000);
 }
 
-function formatCheckinStatus(acc) {
-  const info = acc.checkin || {};
-  const status = info.status || acc.checkin_status;
-  const lastAt = info.last_at || acc.last_checkin_at;
-
-  if (status === 'success') {
-    const timeStr = lastAt ? formatDate(lastAt) : '已完成';
-    return `<span class="checkin-badge checkin-badge-success" title="最近签到: ${timeStr}">● 已领取</span>`;
-  }
-  if (status === 'already') {
-    const timeStr = lastAt ? formatDate(lastAt) : '已领取';
-    return `<span class="checkin-badge checkin-badge-success" title="今日已领: ${timeStr}">● 今日已领</span>`;
-  }
-  if (status === 'failed' || status === 'error') {
-    const errText = info.error || acc.checkin_error || '签到失败';
-    return `<span class="checkin-badge checkin-badge-error" title="${errText}">● 失败</span>`;
-  }
-  if (status === 'pending' || status === 'running') {
-    return `<span class="checkin-badge checkin-badge-pending">● 处理中</span>`;
-  }
-  if (lastAt) {
-    return `<span class="checkin-badge checkin-badge-idle" title="上次记录: ${formatDate(lastAt)}">未签到 (${formatDate(lastAt).slice(5, 10)})</span>`;
-  }
-  return `<span class="checkin-badge checkin-badge-idle">未签到</span>`;
-}
-
 async function loadAccounts() {
   const tbody = document.getElementById('accounts-table-body');
   const countElem = document.getElementById('accounts-count');
@@ -808,7 +623,7 @@ async function loadAccounts() {
     state.accounts = accounts;
     countElem.textContent = `${accounts.length} 个账号`;
     if (!accounts.length) {
-      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding: 24px; color: var(--text-dim);">还没有账号。用右上角登录，或粘贴官网个人令牌。</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 24px; color: var(--text-dim);">还没有账号。用右上角登录，或粘贴官网个人令牌。</td></tr>`;
       return;
     }
     tbody.innerHTML = '';
@@ -819,8 +634,6 @@ async function loadAccounts() {
       const kind = formatAccountKind(acc.kind);
       const label = acc.email || acc.name || acc.user_id || acc.id;
       const enabledChecked = acc.enabled ? 'checked' : '';
-      const checkinStatusHtml = formatCheckinStatus(acc);
-
       let flagsHtml = '';
       if (acc.skip_quota) {
         flagsHtml += `<button class="flag-chip active-warn" data-action="clear-flags" data-id="${acc.id}" title="点此恢复进入轮询">额度耗尽（点此恢复）</button>`;
@@ -831,7 +644,6 @@ async function loadAccounts() {
       if (!flagsHtml) {
         flagsHtml = `<button class="flag-chip" data-action="clear-flags" data-id="${acc.id}" title="当前无标记，点此重置">无标记</button>`;
       }
-      const checkinBtn = `<button class="btn btn-sm btn-primary" data-action="checkin" data-id="${acc.id}" title="为该账号签到领取 100 Credits">签到</button>`;
       const refreshBtn = acc.kind === 'pat'
         ? `<button class="btn btn-sm" data-action="refresh" data-id="${acc.id}">刷新令牌</button>`
         : '';
@@ -847,12 +659,10 @@ async function loadAccounts() {
           ${err}
         </td>
         <td class="tabular-nums">${formatNumber(rem)}</td>
-        <td>${checkinStatusHtml}</td>
         <td class="tabular-nums">${formatDate(acc.expires_at)}</td>
         <td><input type="checkbox" data-action="toggle-enabled" data-id="${acc.id}" ${enabledChecked}></td>
         <td>${flagsHtml}</td>
         <td class="accounts-actions">
-          ${checkinBtn}
           ${clearFlagsBtn}
           ${refreshBtn}
           <button class="btn btn-sm btn-danger" data-action="delete" data-id="${acc.id}">删除</button>
@@ -1005,9 +815,7 @@ async function onAccountsTableClick(ev) {
   const id = btn.getAttribute('data-id');
   const action = btn.getAttribute('data-action');
   try {
-    if (action === 'checkin') {
-      await triggerAccountCheckin(id, btn);
-    } else if (action === 'clear-flags') {
+    if (action === 'clear-flags') {
       await patchAccount(id, { skip_quota: false, skip_auth: false });
       showToast('已清除标记，账号重新进入轮询', 'success');
       await checkAuthAndLoad();
@@ -1197,7 +1005,7 @@ function setupEventListeners() {
     const proxyHost = (s && s.proxy_host) || '127.0.0.1';
     const proxyPort = (s && s.proxy_port) || 8000;
     const currentKey = localStorage.getItem(STORAGE_KEY) || '<本代理密钥>';
-
+    
     // Copy full valid curl command with the actual key
     const realCurl = `curl http://${proxyHost}:${proxyPort}/v1/chat/completions \\
   -H "Content-Type: application/json" \\
@@ -1241,31 +1049,6 @@ function setupEventListeners() {
     authToggle.addEventListener('change', (e) => {
       updateRuntimeSetting('auto_mark_auth', e.target.checked, authToggle);
     });
-  }
-
-  // Checkin settings
-  const checkinToggle = document.getElementById('auto-checkin-toggle');
-  if (checkinToggle) {
-    checkinToggle.addEventListener('change', (e) => {
-      updateRuntimeSetting('auto_checkin', e.target.checked, checkinToggle);
-    });
-  }
-
-  const saveCheckinTimeBtn = document.getElementById('save-checkin-time-btn');
-  if (saveCheckinTimeBtn) {
-    saveCheckinTimeBtn.addEventListener('click', saveCheckinTime);
-  }
-
-  const checkinTimeInput = document.getElementById('checkin-time-input');
-  if (checkinTimeInput) {
-    checkinTimeInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') saveCheckinTime();
-    });
-  }
-
-  const triggerAllBtn = document.getElementById('trigger-all-checkin-btn');
-  if (triggerAllBtn) {
-    triggerAllBtn.addEventListener('click', triggerAllCheckin);
   }
 
   // Export and Import
