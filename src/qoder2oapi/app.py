@@ -10,19 +10,19 @@ import uvicorn
 from qoder2oapi.catalog import catalog_manager
 from qoder2oapi.config import settings
 from qoder2oapi.http import close_http_client
-from qoder2oapi.refresh import ensure_fresh
+from qoder2oapi.refresh import ensure_fresh, needs_refresh
 from qoder2oapi.routes.admin import router as admin_router
 from qoder2oapi.routes.openai import router as openai_router
 from qoder2oapi.token_store import token_store
 
 
-async def _background_pat_refresh_loop():
+async def _background_token_refresh_loop():
     while True:
         try:
             await asyncio.sleep(1800)
             accounts = token_store.list_accounts()
             for acc in accounts:
-                if acc.kind == "pat" and acc.enabled and not acc.skip_auth:
+                if needs_refresh(acc) and acc.enabled and not acc.skip_auth:
                     try:
                         await ensure_fresh(acc)
                     except Exception:
@@ -35,7 +35,7 @@ async def _background_pat_refresh_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    refresh_task = asyncio.create_task(_background_pat_refresh_loop())
+    refresh_task = asyncio.create_task(_background_token_refresh_loop())
     try:
         await catalog_manager.fetch_models()
     except Exception:

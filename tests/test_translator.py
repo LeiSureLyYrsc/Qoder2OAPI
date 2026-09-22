@@ -279,3 +279,23 @@ def test_client_context_length_override_clamped():
     )
     payload_small, _ = translate_openai_to_qoder(too_small, user_id="user_123")
     assert payload_small["parameters"]["context_length"] == 180000
+
+
+def test_cli_payload_keeps_qodercli_session():
+    req = ChatCompletionRequest(
+        model="gpt-4o",
+        messages=[ChatMessage(role="user", content="hi")],
+    )
+    payload, _ = translate_openai_to_qoder(req, user_id="user_123")
+    assert payload["session_type"] == "qodercli"
+    assert payload["business"]["product"] == "cli"
+
+
+def test_desktop_payload_uses_app_session():
+    req = ChatCompletionRequest(
+        model="gpt-4o",
+        messages=[ChatMessage(role="user", content="hi")],
+    )
+    payload, _ = translate_openai_to_qoder(req, user_id="user_123", client="desktop")
+    assert payload["session_type"] == "app"
+    assert payload["business"]["product"] == "app"

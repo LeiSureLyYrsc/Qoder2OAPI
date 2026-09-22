@@ -16,11 +16,15 @@ uv run qoder2oapi
 
 默认监听 `127.0.0.1:8000`。首次启动会生成代理 API Key，打印到终端并写入 `data/api_key.txt`。
 
-打开 http://127.0.0.1:8000 ，粘贴该 Key。然后可以用浏览器「登录 Qoder」或粘贴 Qoder PAT（`pt-...`，来自 [账号集成](https://qoder.com.cn/account/integrations)）把账号加入号池。
+打开 http://127.0.0.1:8000 ，粘贴该 Key。然后可以用浏览器「登录桌面端」「登录 CLI」或粘贴 Qoder PAT（`pt-...`，来自 [账号集成](https://qoder.cn/account/integrations)）把账号加入号池。
 
-PAT 不是本代理的 API Key。PAT 会兑换成短命 job token；过期后自动 `jobToken/refresh`，失败再重新兑换。OAuth 账号不自动刷新，失效后需重新登录。
+三种登录并存：
 
-请求按号池轮询。控制台可分别配置“额度耗尽”和“登录失效”的自动标记策略；额度自动标记默认关闭，避免通用积分归零时误跳过仍有 Qwen 专属积分的账号。点标记或「清除标记」后可重新进入轮询。设置保存在 `data/settings.json`，号池明文保存在 `data/accounts.json`，控制台可导出/导入（合并或整池替换）。导出文件含登录凭证，不要发到公开地方。`/v1/dashboard/billing/usage` 的 credits 是号池合计，并单独返回专属资源包。
+- **桌面端 OAuth**：按 Qoder CN 桌面客户端身份登录（`client_id`、`qoder.cn`）。聊天走桌面端请求头；token 过期后自动 `deviceToken/refresh`。
+- **CLI OAuth**：沿用原来的浏览器登录。聊天走 CLI 身份；失效后需重新登录。
+- **官网 PAT**：兑换成短命 job token；过期后自动 `jobToken/refresh`，失败再重新兑换。
+
+PAT 不是本代理的 API Key。请求按号池轮询。控制台可分别配置“额度耗尽”和“登录失效”的自动标记策略；额度自动标记默认关闭，避免通用积分归零时误跳过仍有 Qwen 专属积分的账号。点标记或「清除标记」后可重新进入轮询。设置保存在 `data/settings.json`，号池明文保存在 `data/accounts.json`，控制台可导出/导入（合并或整池替换）。导出文件含登录凭证，不要发到公开地方。`/v1/dashboard/billing/usage` 的 credits 是号池合计，并单独返回专属资源包。
 
 ## 调用
 

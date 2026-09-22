@@ -6,6 +6,14 @@ import uuid
 
 from fastapi import HTTPException
 from qoder2oapi.catalog import catalog_manager
+from qoder2oapi.constants import (
+    CLI_BUSINESS_PRODUCT,
+    CLI_SESSION_TYPE,
+    DESKTOP_APP_VERSION,
+    DESKTOP_BUSINESS_PRODUCT,
+    DESKTOP_SESSION_TYPE,
+)
+from qoder2oapi.identity import is_desktop
 from qoder2oapi.models import ChatCompletionRequest
 
 
@@ -59,6 +67,7 @@ def _flatten_content(content: str | list[Any] | None) -> str | list[Any]:
 def translate_openai_to_qoder(
     request: ChatCompletionRequest,
     user_id: str,
+    client: str = "cli",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     requested_key = request.model
     model_data = catalog_manager.get_model(requested_key)
@@ -168,6 +177,10 @@ def translate_openai_to_qoder(
     }
 
     system_text = "\n\n".join(system_msgs)
+    desktop = is_desktop(client)
+    session_type = DESKTOP_SESSION_TYPE if desktop else CLI_SESSION_TYPE
+    business_product = DESKTOP_BUSINESS_PRODUCT if desktop else CLI_BUSINESS_PRODUCT
+    business_version = DESKTOP_APP_VERSION if desktop else "1.0.0"
 
     payload: dict[str, Any] = {
         "request_id": str(uuid.uuid4()),
@@ -180,7 +193,7 @@ def translate_openai_to_qoder(
         "is_retry": False,
         "source": 1,
         "version": "3",
-        "session_type": "qodercli",
+        "session_type": session_type,
         "agent_id": "agent_common",
         "task_id": "common",
         "code_language": "",
@@ -194,8 +207,8 @@ def translate_openai_to_qoder(
         "chat_context": chat_context,
         "model_config": model_config_override,
         "business": {
-            "product": "cli",
-            "version": "1.0.0",
+            "product": business_product,
+            "version": business_version,
             "type": "agent",
             "stage": "start",
             "id": str(uuid.uuid4()),

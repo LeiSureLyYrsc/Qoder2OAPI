@@ -375,3 +375,46 @@ async def test_pat_refresh_fail_with_auto_mark_auth_false(monkeypatch):
     saved = ts_mod.token_store.get(acc.id)
     assert saved.skip_auth is False
     assert saved.last_error != ""
+
+
+@pytest.mark.asyncio
+async def test_desktop_oauth_refreshes_via_device_token(monkeypatch):
+    posted = []
+
+    class MockResp:
+        status_code = 200
+
+        def json(self):
+            return {
+                "data": {
+                    "token": "dt-new",
+                    "refresh_token": "rt-new",
+                    "expires_in": 3600,
+                    "user_id": "u1",
+                }
+            }
+
+    class MockClient:
+        async def post(self, url, *args, **kwargs):
+            posted.append(str(url))
+            return MockResp()
+
+    from qoder2oapi import refresh
+
+    monkeypatch.setattr(refresh, "get_http_client", lambda: MockClient())
+    acc = AccountRecord(
+        id="acc-desk",
+        kind="oauth",
+        client="desktop",
+        access_token="dt-old",
+        refresh_token="rt-old",
+        user_id="u1",
+        machine_id="m1",
+        expires_at=0,
+    )
+    ts_mod.token_store.upsert(acc)
+    res = await ensure_fresh(acc, force=True)
+    assert "deviceToken/refresh" in posted[0]
+    assert res.access_token == "dt-new"
+    assert res.refresh_token == "rt-new"
+    assert res.skip_auth is False

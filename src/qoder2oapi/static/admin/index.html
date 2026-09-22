@@ -71,7 +71,8 @@
           <span id="polling-status-text">等待浏览器授权…</span>
         </div>
 
-        <button id="login-btn" class="btn btn-primary">登录 Qoder</button>
+        <button id="login-desktop-btn" class="btn btn-primary">登录桌面端</button>
+        <button id="login-cli-btn" class="btn">登录 CLI</button>
         <button id="refresh-all-btn" class="btn" title="重新拉取账号、额度和模型">刷新</button>
       </div>
     </header>
@@ -225,7 +226,7 @@
           <button id="add-pat-btn" class="btn btn-primary">添加令牌</button>
         </div>
         <p class="field-hint" style="margin-top: 8px;">
-          在 <a href="https://qoder.com.cn/account/integrations" target="_blank" rel="noopener">qoder.com.cn/account/integrations</a> 创建个人令牌。这是 Qoder 官网令牌，不是上面的本代理密钥。
+          在 <a href="https://qoder.cn/account/integrations" target="_blank" rel="noopener">qoder.cn/account/integrations</a> 创建个人令牌。这是 Qoder 官网令牌，不是上面的本代理密钥。
         </p>
 
         <!-- 自动跳过策略 (Skip Strategies) -->
@@ -285,7 +286,7 @@
             <tbody id="accounts-table-body">
               <tr>
                 <td colspan="7" style="text-align: center; padding: 24px; color: var(--text-dim);">
-                  还没有账号。用右上角登录，或粘贴官网个人令牌。
+                  还没有账号。用右上角登录桌面端或 CLI，或粘贴官网个人令牌。
                 </td>
               </tr>
             </tbody>

@@ -1,7 +1,29 @@
+import urllib.parse
+
 import pytest
 import httpx
 from qoder2oapi.oauth import poll_device_flow, start_device_flow
 from qoder2oapi.token_store import token_store
+
+
+def test_cli_device_flow_url_has_no_client_id():
+    flow = start_device_flow("cli")
+    assert flow["client"] == "cli"
+    assert flow["verification_uri"].startswith("https://qoder.com.cn/device/selectAccounts")
+    assert "client_id=" not in flow["verification_uri"]
+    assert "biz_variant=" not in flow["verification_uri"]
+
+
+def test_desktop_device_flow_url_wraps_sign_in():
+    flow = start_device_flow("desktop")
+    assert flow["client"] == "desktop"
+    assert flow["verification_uri"].startswith("https://qoder.cn/users/sign-in?")
+    assert "biz_variant=qoder" in flow["verification_uri"]
+    assert "oauth_callback=" in flow["verification_uri"]
+    assert "732aef47-9cf2-46a2-95fe-4cebb5d0d1fa" in flow["verification_uri"]
+    decoded = urllib.parse.unquote(flow["verification_uri"])
+    assert "https://qoder.cn/device/selectAccounts" in decoded
+    assert "client_id=732aef47-9cf2-46a2-95fe-4cebb5d0d1fa" in decoded
 
 
 @pytest.mark.asyncio
@@ -81,6 +103,7 @@ async def test_oauth_success_200_parse(monkeypatch):
     accounts = oauth.token_store.list_accounts()
     assert len(accounts) == 1
     assert accounts[0].kind == "oauth"
+    assert accounts[0].client == "cli"
 
 
 @pytest.mark.asyncio
@@ -111,3 +134,43 @@ async def test_oauth_userinfo_id_is_used_when_poll_omits_user_id(monkeypatch):
     result = await poll_device_flow(flow["login_id"])
     assert result["status"] == "ok"
     assert result["user"]["user_id"] == "userinfo-id"
+
+
+@pytest.mark.asyncio
+async def test_desktop_oauth_poll_saves_desktop_client(monkeypatch):
+    flow = start_device_flow("desktop")
+
+    class MockPollResp:
+        status_code = 200
+
+        def json(self):
+            return {
+                "data": {
+                    "token": "dt-desktop",
+                    "refresh_token": "rt-desktop",
+                    "user_id": "u_desk",
+                    "expires_in": 3600,
+                }
+            }
+
+    class MockUserInfoResp:
+        status_code = 200
+
+        def json(self):
+            return {"data": {"nickname": "Desk", "email": "desk@example.com"}}
+
+    class MockClient:
+        async def get(self, url, *args, **kwargs):
+            if "poll" in str(url):
+                return MockPollResp()
+            return MockUserInfoResp()
+
+    from qoder2oapi import oauth
+
+    monkeypatch.setattr(oauth, "get_http_client", lambda: MockClient())
+    result = await poll_device_flow(flow["login_id"])
+    assert result["status"] == "ok"
+    assert result["user"]["client"] == "desktop"
+    saved = oauth.token_store.list_accounts()[0]
+    assert saved.client == "desktop"
+    assert saved.kind == "oauth"

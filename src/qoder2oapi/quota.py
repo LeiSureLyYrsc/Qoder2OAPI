@@ -4,7 +4,7 @@ from qoder2oapi.constants import QUOTA_URL
 from qoder2oapi.http import get_http_client
 from qoder2oapi.models import AccountRecord
 from qoder2oapi.pool import pool
-from qoder2oapi.refresh import ensure_fresh
+from qoder2oapi.refresh import ensure_fresh, needs_refresh
 from qoder2oapi.token_store import token_store
 
 
@@ -109,10 +109,10 @@ def parse_quota_data(data: dict[str, Any]) -> dict[str, Any]:
 
 
 async def fetch_quota_for_account(account: AccountRecord) -> dict[str, Any]:
-    if account.kind == "pat":
+    if needs_refresh(account):
         account = await ensure_fresh(account)
         if account.skip_auth:
-            return {"error": account.last_error or "PAT authentication failed", "status_code": 401}
+            return {"error": account.last_error or "Authentication failed", "status_code": 401}
     client = get_http_client()
     headers = {
         "Authorization": f"Bearer {account.access_token}",
@@ -121,7 +121,7 @@ async def fetch_quota_for_account(account: AccountRecord) -> dict[str, Any]:
     try:
         resp = await client.get(QUOTA_URL, headers=headers)
         if resp.status_code == 401:
-            if account.kind == "pat":
+            if needs_refresh(account):
                 account = await ensure_fresh(account, force=True)
                 if not account.skip_auth:
                     headers["Authorization"] = f"Bearer {account.access_token}"

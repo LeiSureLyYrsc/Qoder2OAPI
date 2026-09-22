@@ -8,9 +8,8 @@ from qoder2oapi.models import ChatCompletionRequest, ModelCard, ModelListRespons
 from qoder2oapi.names import public_id_for_key
 from qoder2oapi.pool import pool
 from qoder2oapi.quota import fetch_quota
-from qoder2oapi.refresh import ensure_fresh
+from qoder2oapi.refresh import ensure_fresh, needs_refresh
 from qoder2oapi.token_store import token_store
-from qoder2oapi.translator import translate_openai_to_qoder
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(verify_api_key)])
 
@@ -40,7 +39,7 @@ async def chat_completions(request: ChatCompletionRequest):
     usable_accounts = pool.peek_usable()
     if not usable_accounts:
         for account in token_store.list_accounts():
-            if account.kind == "pat" and account.enabled and account.skip_auth:
+            if needs_refresh(account) and account.enabled and account.skip_auth:
                 await ensure_fresh(account, force=True)
         usable_accounts = pool.peek_usable()
     if not usable_accounts:
@@ -53,10 +52,7 @@ async def chat_completions(request: ChatCompletionRequest):
     if not catalog_manager.get_model(request.model):
         await catalog_manager.fetch_models()
 
-    user_id = usable_accounts[0].user_id or "pool"
-    payload, model_data = translate_openai_to_qoder(request, user_id=user_id)
-    is_stream = bool(request.stream)
-    return await execute_infer(payload, model_data, stream=is_stream)
+    return await execute_infer(request, stream=bool(request.stream))
 
 
 @router.get("/dashboard/billing/usage")

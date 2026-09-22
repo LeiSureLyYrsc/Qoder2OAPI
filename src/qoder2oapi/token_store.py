@@ -5,11 +5,14 @@ import uuid
 from typing import Any
 
 from qoder2oapi.config import data_dir_path
+from qoder2oapi.constants import CLIENT_CLI
+from qoder2oapi.identity import normalize_client
 from qoder2oapi.models import AccountRecord, TokenRecord
 
 EXPORT_FIELDS = (
     "id",
     "kind",
+    "client",
     "access_token",
     "refresh_token",
     "pat",
@@ -26,14 +29,22 @@ EXPORT_FIELDS = (
 STORAGE_FIELDS = EXPORT_FIELDS + ("last_error",)
 
 
+def _field_default(field: str) -> Any:
+    if field == "expires_at":
+        return 0
+    if field == "client":
+        return CLIENT_CLI
+    return ""
+
+
 def account_to_config(account: AccountRecord) -> dict[str, Any]:
     data = account.model_dump()
-    return {field: data.get(field, "" if field != "expires_at" else 0) for field in EXPORT_FIELDS}
+    return {field: data.get(field, _field_default(field)) for field in EXPORT_FIELDS}
 
 
 def account_to_storage(account: AccountRecord) -> dict[str, Any]:
     data = account.model_dump()
-    return {field: data.get(field, "" if field != "expires_at" else 0) for field in STORAGE_FIELDS}
+    return {field: data.get(field, _field_default(field)) for field in STORAGE_FIELDS}
 
 
 def parse_account_payload(raw: Any) -> AccountRecord | None:
@@ -62,6 +73,7 @@ def parse_account_payload(raw: Any) -> AccountRecord | None:
     return AccountRecord(
         id=account_id,
         kind=kind,
+        client=normalize_client(raw.get("client")),
         access_token=access_token,
         refresh_token=refresh_token,
         pat=pat,

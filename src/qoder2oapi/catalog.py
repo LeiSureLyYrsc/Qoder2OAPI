@@ -8,7 +8,7 @@ from qoder2oapi.constants import MODEL_LIST_ALGO_URL, MODEL_LIST_URL
 from qoder2oapi.cosy import build_cosy_headers
 from qoder2oapi.http import get_http_client
 from qoder2oapi.names import catalog_key_candidates
-from qoder2oapi.refresh import ensure_fresh
+from qoder2oapi.refresh import ensure_fresh, needs_refresh
 from qoder2oapi.token_store import token_store
 
 _THINKING_ORDER = ["none", "low", "medium", "high", "xhigh", "max"]
@@ -166,7 +166,7 @@ class CatalogManager:
         record = usable[0] if usable else token_store.load_token()
         if not record:
             return self.raw_models
-        if record.kind == "pat":
+        if needs_refresh(record):
             record = await ensure_fresh(record)
             if record.skip_auth or not record.user_id:
                 return self.raw_models
@@ -179,7 +179,7 @@ class CatalogManager:
         )
 
         resp = await _fetch_model_response(client, urls, record.model_dump())
-        if record.kind == "pat" and resp is not None and resp.status_code in (401, 403):
+        if needs_refresh(record) and resp is not None and resp.status_code in (401, 403):
             record = await ensure_fresh(record, force=True)
             if not record.skip_auth and record.user_id:
                 resp = await _fetch_model_response(client, urls, record.model_dump())

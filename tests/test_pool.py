@@ -279,3 +279,23 @@ def test_mark_skip_gates():
     # skip_auth remained False because auto_mark_auth is False
     assert saved.skip_auth is False
     assert saved.last_error == "Auth 403"
+
+
+def test_import_legacy_accounts_defaults_client_to_cli():
+    ts_mod.token_store.clear()
+    result = ts_mod.token_store.import_accounts(
+        {
+            "accounts": [
+                {
+                    "kind": "oauth",
+                    "access_token": "legacy-token",
+                    "user_id": "legacy-user",
+                    "machine_id": "m-legacy",
+                }
+            ]
+        },
+        mode="replace",
+    )
+    assert result["imported"] == 1
+    restored = ts_mod.token_store.list_accounts()
+    assert restored[0].client == "cli"

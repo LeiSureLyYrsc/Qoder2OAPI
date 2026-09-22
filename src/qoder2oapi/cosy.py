@@ -13,12 +13,17 @@ from qoder2oapi.constants import (
     CLIENT_TYPE,
     COSY_VERSION,
     DATA_POLICY,
+    DESKTOP_APP_VERSION,
+    DESKTOP_BUSINESS_PRODUCT,
+    DESKTOP_CLIENT_TYPE,
+    DESKTOP_USER_AGENT,
     IDE_VERSION,
     LOGIN_VERSION,
     MACHINE_OS,
     MACHINE_TYPE,
     RSA_PUBLIC_KEY,
 )
+from qoder2oapi.identity import is_desktop
 
 
 def _pad_pkcs7(data: bytes, block_size: int = 128) -> bytes:
@@ -69,12 +74,17 @@ def build_cosy_headers(
     cosy_key_bytes = _encrypt_rsa_pkcs1(RSA_PUBLIC_KEY, aes_key_bytes)
     cosy_key = base64.b64encode(cosy_key_bytes).decode("latin1")
 
+    desktop = is_desktop(str(creds.get("client") or ""))
+    client_type = DESKTOP_CLIENT_TYPE if desktop else CLIENT_TYPE
+    cosy_version = DESKTOP_APP_VERSION if desktop else COSY_VERSION
+    ide_version = DESKTOP_APP_VERSION if desktop else IDE_VERSION
+
     payload_json = {
         "version": "v1",
         "requestId": request_id,
         "info": info_b64,
-        "cosyVersion": COSY_VERSION,
-        "ideVersion": IDE_VERSION,
+        "cosyVersion": cosy_version,
+        "ideVersion": ide_version,
     }
     payload_b64 = base64.b64encode(
         json.dumps(payload_json, separators=(",", ":")).encode("utf-8")
@@ -97,12 +107,12 @@ def build_cosy_headers(
         "Cosy-Key": cosy_key,
         "Cosy-User": creds.get("user_id", ""),
         "Cosy-Date": timestamp,
-        "Cosy-Version": COSY_VERSION,
+        "Cosy-Version": cosy_version,
         "Cosy-Machineid": machine_id,
         "Cosy-Machinetoken": machine_id,
         "Cosy-Machinetype": MACHINE_TYPE,
         "Cosy-Machineos": MACHINE_OS,
-        "Cosy-Clienttype": CLIENT_TYPE,
+        "Cosy-Clienttype": client_type,
         "Cosy-Clientip": "127.0.0.1",
         "Cosy-Bodyhash": body_hash,
         "Cosy-Bodylength": str(len(body)),
@@ -113,4 +123,10 @@ def build_cosy_headers(
         "Login-Version": LOGIN_VERSION,
         "X-Request-Id": request_id,
     }
+    if desktop:
+        headers["Cosy-Business-Product"] = DESKTOP_BUSINESS_PRODUCT
+        headers["X-IDE-Platform"] = DESKTOP_BUSINESS_PRODUCT
+        headers["X-Version"] = DESKTOP_APP_VERSION
+        headers["X-Machine-OS"] = MACHINE_OS
+        headers["User-Agent"] = DESKTOP_USER_AGENT
     return headers

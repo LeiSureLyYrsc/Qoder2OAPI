@@ -206,7 +206,6 @@ function renderStatusSection() {
 
   const authDot = document.getElementById('auth-status-dot');
   const authText = document.getElementById('auth-status-text');
-  const loginBtn = document.getElementById('login-btn');
 
   const proxyHost = s.proxy_host || '127.0.0.1';
   const proxyPort = s.proxy_port || 8000;
@@ -233,11 +232,9 @@ function renderStatusSection() {
   if (total === 0) {
     authDot.className = 'dot dot-amber';
     authText.textContent = '还没有账号';
-    loginBtn.textContent = '登录 Qoder';
   } else {
     authDot.className = usable > 0 ? 'dot dot-green' : 'dot dot-amber';
     authText.textContent = `${total} 个账号 · ${usable} 可用`;
-    loginBtn.textContent = '添加账号';
   }
 }
 
@@ -303,8 +300,9 @@ function formatQuotaSource(userType) {
   return value;
 }
 
-function formatAccountKind(kind) {
-  return kind === 'pat' ? '官网令牌' : '浏览器登录';
+function formatAccountKind(kind, client) {
+  if (kind === 'pat') return '官网令牌';
+  return client === 'desktop' ? '桌面端' : 'CLI';
 }
 
 function formatDedicatedPackageTitle(pkg) {
@@ -539,18 +537,24 @@ async function loadModels() {
   }
 }
 
+function setLoginButtonsDisabled(disabled) {
+  ['login-desktop-btn', 'login-cli-btn'].forEach((id) => {
+    const btn = document.getElementById(id);
+    if (btn) btn.disabled = disabled;
+  });
+}
+
 // --- OAuth Device Flow ---
-async function startLogin() {
-  const loginBtn = document.getElementById('login-btn');
+async function startLogin(client) {
   const pollingChip = document.getElementById('polling-chip');
   const pollingText = document.getElementById('polling-status-text');
 
-  loginBtn.disabled = true;
+  setLoginButtonsDisabled(true);
   pollingChip.classList.remove('hidden');
   pollingText.textContent = '正在打开登录页…';
 
   try {
-    const resp = await api('/api/admin/login/start', { method: 'POST' });
+    const resp = await api(`/api/admin/login/start?client=${encodeURIComponent(client)}`, { method: 'POST' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
 
@@ -559,16 +563,13 @@ async function startLogin() {
       throw new Error('没有拿到登录地址');
     }
 
-    // Open browser authorization page in a new window
     window.open(verification_uri, '_blank');
-    showToast('已打开 Qoder 登录页，请在浏览器里完成授权', 'info');
+    showToast(client === 'desktop' ? '已打开桌面端登录页，请在浏览器里完成授权' : '已打开 CLI 登录页，请在浏览器里完成授权', 'info');
 
-    // Start polling
     state.pollStartTime = Date.now();
     pollOAuthStatus(login_id);
   } catch (err) {
     stopPolling();
-    loginBtn.disabled = false;
     showToast(`无法开始登录: ${err.message}`, 'error');
   }
 }
@@ -623,7 +624,7 @@ async function loadAccounts() {
     state.accounts = accounts;
     countElem.textContent = `${accounts.length} 个账号`;
     if (!accounts.length) {
-      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 24px; color: var(--text-dim);">还没有账号。用右上角登录，或粘贴官网个人令牌。</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 24px; color: var(--text-dim);">还没有账号。用右上角登录桌面端或 CLI，或粘贴官网个人令牌。</td></tr>`;
       return;
     }
     tbody.innerHTML = '';
@@ -631,7 +632,7 @@ async function loadAccounts() {
       const tr = document.createElement('tr');
       const snap = acc.quota_snapshot || {};
       const rem = accountRemaining(snap);
-      const kind = formatAccountKind(acc.kind);
+      const kind = formatAccountKind(acc.kind, acc.client);
       const label = acc.email || acc.name || acc.user_id || acc.id;
       const enabledChecked = acc.enabled ? 'checked' : '';
       let flagsHtml = '';
@@ -644,7 +645,7 @@ async function loadAccounts() {
       if (!flagsHtml) {
         flagsHtml = `<button class="flag-chip" data-action="clear-flags" data-id="${acc.id}" title="当前无标记，点此重置">无标记</button>`;
       }
-      const refreshBtn = acc.kind === 'pat'
+      const refreshBtn = (acc.kind === 'pat' || acc.client === 'desktop')
         ? `<button class="btn btn-sm" data-action="refresh" data-id="${acc.id}">刷新令牌</button>`
         : '';
       const clearFlagsBtn = `<button class="btn btn-sm" data-action="clear-flags" data-id="${acc.id}" title="清除该账号的跳过标记与错误记录">清除标记</button>`;
@@ -826,7 +827,7 @@ async function onAccountsTableClick(ev) {
       const resp = await api(`/api/admin/accounts/${encodeURIComponent(id)}/refresh`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
-      showToast('已刷新官网令牌', 'success');
+      showToast('已刷新令牌', 'success');
       await checkAuthAndLoad();
     } else if (action === 'delete') {
       const ok = await askConfirm('删除后这条账号不再参与转发。', '删除账号');
@@ -846,8 +847,7 @@ function stopPolling() {
     clearInterval(state.pollingTimer);
     state.pollingTimer = null;
   }
-  const loginBtn = document.getElementById('login-btn');
-  if (loginBtn) loginBtn.disabled = false;
+  setLoginButtonsDisabled(false);
   const pollingChip = document.getElementById('polling-chip');
   if (pollingChip) pollingChip.classList.add('hidden');
 }
@@ -981,7 +981,8 @@ function setupEventListeners() {
   });
 
   // Top actions
-  document.getElementById('login-btn').addEventListener('click', startLogin);
+  document.getElementById('login-desktop-btn').addEventListener('click', () => startLogin('desktop'));
+  document.getElementById('login-cli-btn').addEventListener('click', () => startLogin('cli'));
   document.getElementById('refresh-all-btn').addEventListener('click', () => {
     showToast('正在刷新账号、额度和模型…', 'info');
     checkAuthAndLoad();

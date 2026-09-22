@@ -10,10 +10,12 @@ from qoder2oapi.constants import CHAT_URL
 from qoder2oapi.cosy import build_cosy_headers
 from qoder2oapi.encoding import qoder_encode_body
 from qoder2oapi.http import get_http_client
+from qoder2oapi.models import ChatCompletionRequest
 from qoder2oapi.pool import pool
-from qoder2oapi.refresh import ensure_fresh
+from qoder2oapi.refresh import ensure_fresh, needs_refresh
 from qoder2oapi.sse import accumulate_sse_response, unwrap_sse_stream
 from qoder2oapi.token_store import token_store
+from qoder2oapi.translator import translate_openai_to_qoder
 
 
 async def _line_generator(response: httpx.Response) -> AsyncIterator[str]:
@@ -39,18 +41,41 @@ def _is_quota_error(err_content: Any) -> bool:
     return False
 
 
+def _encode_chat_body(request: ChatCompletionRequest, account) -> tuple[bytes, dict[str, Any], dict[str, Any]]:
+    payload, model_data = translate_openai_to_qoder(
+        request,
+        user_id=account.user_id or "pool",
+        client=account.client,
+    )
+    raw_json_bytes = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    encoded_body_bytes = qoder_encode_body(raw_json_bytes).encode("latin1")
+    return encoded_body_bytes, payload, model_data
+
+
+def _chat_headers(encoded_body_bytes: bytes, account, payload: dict[str, Any], model_data: dict[str, Any]) -> dict[str, str]:
+    creds = account.model_dump()
+    headers = build_cosy_headers(encoded_body_bytes, CHAT_URL, creds)
+    headers["Content-Type"] = "application/json"
+    headers["Accept"] = "text/event-stream"
+    headers["Accept-Encoding"] = "identity"
+    headers["X-Model-Key"] = str(
+        model_data.get("key", payload.get("chat_context", {}).get("extra", {}).get("modelConfig", {}).get("key", ""))
+    )
+    headers["X-Model-Source"] = str(
+        model_data.get("source")
+        or payload.get("model_config", {}).get("source")
+        or "system"
+    )
+    return headers
+
+
 async def execute_infer(
-    payload: dict[str, Any],
-    model_data: dict[str, Any],
+    request: ChatCompletionRequest,
     stream: bool,
 ) -> StreamingResponse | JSONResponse:
     usable_accounts = pool.peek_usable()
     if not usable_accounts:
         raise HTTPException(status_code=401, detail="No usable Qoder account. Please log in or check quotas.")
-
-    raw_json_bytes = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    encoded_body_str = qoder_encode_body(raw_json_bytes)
-    encoded_body_bytes = encoded_body_str.encode("latin1")
 
     client = get_http_client()
     all_auth_errors = True
@@ -60,28 +85,13 @@ async def execute_infer(
         if not account:
             break
 
-        if account.kind == "pat":
+        if needs_refresh(account):
             account = await ensure_fresh(account)
             if not pool.usable(account):
                 continue
 
-        creds = account.model_dump()
-        headers = build_cosy_headers(encoded_body_bytes, CHAT_URL, creds)
-        headers["Content-Type"] = "application/json"
-        headers["Accept"] = "text/event-stream"
-        headers["Accept-Encoding"] = "identity"
-
-        model_key = str(
-            model_data.get("key", payload.get("chat_context", {}).get("extra", {}).get("modelConfig", {}).get("key", ""))
-        )
-        headers["X-Model-Key"] = model_key
-
-        model_source = str(
-            model_data.get("source")
-            or payload.get("model_config", {}).get("source")
-            or "system"
-        )
-        headers["X-Model-Source"] = model_source
+        encoded_body_bytes, payload, model_data = _encode_chat_body(request, account)
+        headers = _chat_headers(encoded_body_bytes, account, payload, model_data)
 
         req = client.build_request(
             "POST",
@@ -94,17 +104,11 @@ async def execute_infer(
         # Handle 401 / 403
         if upstream_resp.status_code in (401, 403):
             await upstream_resp.aclose()
-            if account.kind == "pat":
+            if needs_refresh(account):
                 account = await ensure_fresh(account, force=True)
                 if pool.usable(account):
-                    # retry once with refreshed account
-                    creds = account.model_dump()
-                    headers = build_cosy_headers(encoded_body_bytes, CHAT_URL, creds)
-                    headers["Content-Type"] = "application/json"
-                    headers["Accept"] = "text/event-stream"
-                    headers["Accept-Encoding"] = "identity"
-                    headers["X-Model-Key"] = model_key
-                    headers["X-Model-Source"] = model_source
+                    encoded_body_bytes, payload, model_data = _encode_chat_body(request, account)
+                    headers = _chat_headers(encoded_body_bytes, account, payload, model_data)
                     req2 = client.build_request("POST", CHAT_URL, content=encoded_body_bytes, headers=headers)
                     upstream_resp = await client.send(req2, stream=True)
                     if upstream_resp.status_code in (401, 403):
@@ -112,7 +116,7 @@ async def execute_infer(
                         pool.mark_skip_auth(account.id, f"HTTP {upstream_resp.status_code}")
                         continue
                 else:
-                    pool.mark_skip_auth(account.id, "PAT refresh failed on 401/403")
+                    pool.mark_skip_auth(account.id, "Token refresh failed on 401/403")
                     continue
             else:
                 pool.mark_skip_auth(account.id, f"HTTP {upstream_resp.status_code}")

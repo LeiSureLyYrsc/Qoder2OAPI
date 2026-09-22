@@ -7,11 +7,12 @@ from pydantic import BaseModel, Field
 from qoder2oapi.auth_proxy import verify_api_key
 from qoder2oapi.catalog import catalog_manager
 from qoder2oapi.config import api_key_file, settings
+from qoder2oapi.identity import normalize_client
 from qoder2oapi.names import public_id_for_key, public_name_for_key
 from qoder2oapi.oauth import poll_device_flow, start_device_flow
 from qoder2oapi.pool import pool
 from qoder2oapi.quota import fetch_quota
-from qoder2oapi.refresh import ensure_fresh, exchange_pat
+from qoder2oapi.refresh import ensure_fresh, exchange_pat, needs_refresh
 from qoder2oapi.runtime_settings import runtime_settings
 from qoder2oapi.token_store import token_store
 
@@ -43,8 +44,8 @@ class ImportAccountsRequest(BaseModel):
 
 
 @router.post("/login/start")
-async def admin_login_start() -> dict[str, str]:
-    return start_device_flow()
+async def admin_login_start(client: str = "cli") -> dict[str, str]:
+    return start_device_flow(normalize_client(client))
 
 
 @router.get("/login/poll")
@@ -159,16 +160,15 @@ async def delete_account(account_id: str) -> dict[str, Any]:
 
 
 @router.post("/accounts/{account_id}/refresh")
-async def refresh_pat_account(account_id: str) -> dict[str, Any]:
+async def refresh_account_token(account_id: str) -> dict[str, Any]:
     acc = token_store.get(account_id)
     if not acc:
         raise HTTPException(status_code=404, detail="Account not found")
-    if acc.kind != "pat":
-        raise HTTPException(status_code=400, detail="Only PAT accounts can be manually refreshed")
+    if not needs_refresh(acc):
+        raise HTTPException(status_code=400, detail="Only PAT and desktop OAuth accounts can be manually refreshed")
 
-    # Force refresh by expiring the account record check
     acc.expires_at = 0
-    refreshed = await ensure_fresh(acc)
+    refreshed = await ensure_fresh(acc, force=True)
     if refreshed.skip_auth:
         raise HTTPException(status_code=400, detail=f"Refresh failed: {refreshed.last_error}")
     return {"status": "ok", "account": refreshed.public_dump()}

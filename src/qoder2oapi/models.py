@@ -68,6 +68,7 @@ class ModelListResponse(BaseModel):
 class AccountRecord(BaseModel):
     id: str
     kind: str  # "oauth" | "pat"
+    client: str = "cli"  # "cli" | "desktop"
     access_token: str
     refresh_token: str = ""
     pat: str = ""  # PAT accounts only
