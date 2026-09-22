@@ -9,6 +9,7 @@ let state = {
   apiKey: localStorage.getItem(STORAGE_KEY) || '',
   status: null,
   quota: null,
+  creditsAccounts: [],
   accounts: [],
   models: [],
   runtimeSettings: null,
@@ -244,30 +245,35 @@ async function loadQuota() {
   const quotaEmptyState = document.getElementById('quota-empty-state');
 
   try {
-    const resp = await api('/api/admin/quota');
+    const resp = await api('/v1/dashboard/billing/credits');
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     state.quota = data;
 
-    const isLoggedIn = state.status && state.status.is_logged_in;
+    const general = data.general || {};
+    const addon = data.addon || {};
+    const hasGeneral = Object.keys(general).length > 0 && (general.total > 0 || general.remaining > 0);
+    const hasAddon = Object.keys(addon).length > 0 && (addon.total > 0 || addon.remaining > 0);
+    const accounts = data.accounts || [];
+    state.creditsAccounts = accounts;
 
-    if (!isLoggedIn || (!data.user_quota && !data.add_on_quota) || (data.user_type === 'none' && data.hard_limit === 0)) {
+    if (accounts.length === 0 && !hasGeneral && !hasAddon) {
       quotaContainer.classList.add('hidden');
       quotaEmptyState.classList.remove('hidden');
-      return;
+      return true;
     }
 
     quotaEmptyState.classList.add('hidden');
     quotaContainer.classList.remove('hidden');
 
-    // 1. 套餐额度 (user_quota)
-    renderQuotaBar('user', data.user_quota);
+    // 1. 套餐额度 (general)
+    renderQuotaBar('user', general);
 
-    // 2. 加量包额度 (add_on_quota)
-    renderQuotaBar('addon', data.add_on_quota);
+    // 2. 加量包额度 (addon)
+    renderQuotaBar('addon', addon);
 
-    // 3. 专属额度 (dedicated_resource_packages)
-    renderDedicatedPackages(data.dedicated_resource_packages);
+    // 3. 专属额度 (dedicated) —— 按账号遍历，带账号归属
+    renderDedicatedPackages(accounts);
 
     // 4. 汇总信息
     document.getElementById('quota-user-type').textContent = formatQuotaSource(data.user_type);
@@ -282,10 +288,13 @@ async function loadQuota() {
       exceedChip.innerHTML = '<span class="dot dot-green"></span> 正常';
     }
 
-    renderQuotaAccountLines(data.accounts || []);
+    renderQuotaAccountLines(accounts);
+    applyCreditsToAccountTable();
+    return true;
   } catch (err) {
-    if (err.message === 'UNAUTHORIZED') return;
-    showToast(`获取额度失败: ${err.message}`, 'error');
+    if (err.message === 'UNAUTHORIZED') return false;
+    if (!isRefreshing) showToast(`获取额度失败: ${err.message}`, 'error');
+    return false;
   }
 }
 
@@ -302,41 +311,66 @@ function formatQuotaSource(userType) {
 
 function formatAccountKind(kind, client) {
   if (kind === 'pat') return '官网令牌';
-  return client === 'desktop' ? '桌面端' : 'CLI';
+  return 'CLI';
 }
 
 function formatDedicatedPackageTitle(pkg) {
-  if (!pkg) return '专属资源包';
-  if (Array.isArray(pkg.displayLabels)) {
-    const titleLabel = pkg.displayLabels.find((item) => item && item.dimension === 'title');
-    if (titleLabel) {
-      const i18n = titleLabel.valueI18n || titleLabel.value_i18n || {};
-      return i18n['zh-CN'] || i18n['zh_CN'] || titleLabel.value || '专属资源包';
-    }
+  if (!pkg) return '';
+  if (pkg.recognized && pkg.title && String(pkg.title).trim()) {
+    return String(pkg.title).trim();
   }
-  if (pkg.displayLabels && typeof pkg.displayLabels === 'object') {
-    if (pkg.displayLabels['zh-CN']) return pkg.displayLabels['zh-CN'];
-    if (pkg.displayLabels.title) return pkg.displayLabels.title;
-    if (pkg.displayLabels.value) return pkg.displayLabels.value;
-  }
-  if (pkg.display_labels && typeof pkg.display_labels === 'object') {
-    if (pkg.display_labels['zh-CN']) return pkg.display_labels['zh-CN'];
-    if (pkg.display_labels.title) return pkg.display_labels.title;
-    if (pkg.display_labels.value) return pkg.display_labels.value;
-  }
-  if (pkg.name) return pkg.name;
-  if (pkg.title) return pkg.title;
-  if (pkg.description) return pkg.description;
-  return '专属资源包';
+  return '';
 }
 
-function renderDedicatedPackages(packages) {
+function renderDedicatedPackages(accounts) {
   const block = document.getElementById('quota-dedicated-block');
   const list = document.getElementById('quota-dedicated-list');
   const nums = document.getElementById('quota-dedicated-nums');
   if (!block || !list) return;
 
-  if (!packages || !Array.isArray(packages) || packages.length === 0) {
+  const cards = [];
+  const accountsArr = Array.isArray(accounts) ? accounts : [];
+  for (const acc of accountsArr) {
+    const packages = (acc && acc.dedicated) || [];
+    if (!Array.isArray(packages)) continue;
+    for (const pkg of packages) {
+      if (!pkg || typeof pkg !== 'object') continue;
+      const userLabel = acc.email || acc.name || acc.user_id || acc.id || '';
+      const accountType = acc.user_type ? formatQuotaSource(acc.user_type) : '';
+      const total = Number(pkg.total || 0);
+      const used = Number(pkg.used || 0);
+      const remaining = Number(
+        pkg.remaining !== undefined
+          ? pkg.remaining
+          : Math.max(0, total - used)
+      );
+      const unit = pkg.unit === 'credits' || !pkg.unit ? 'Credits' : pkg.unit;
+
+      const title = formatDedicatedPackageTitle(pkg);
+      const planName = accountType || (pkg.plan_name ? formatQuotaSource(pkg.plan_name) : '');
+
+      let titleHtml = '';
+      if (title) {
+        titleHtml = `<span class="dedicated-pkg-title"><span class="dot dot-blue"></span>${title}</span>`;
+      } else {
+        titleHtml = `<span class="dedicated-pkg-title"><span class="dot dot-blue"></span>${userLabel} · ${planName || '未知套餐'}</span>`;
+      }
+
+      cards.push(`
+        <div class="dedicated-package-card">
+          <div class="dedicated-pkg-header">
+            ${titleHtml}
+            <span class="dedicated-pkg-nums tabular-nums">
+              剩余 <strong>${formatNumber(remaining)}</strong>${total > 0 ? ` / 总计 ${formatNumber(total)}` : ''} ${unit}
+            </span>
+          </div>
+          ${title ? `<div class="dedicated-pkg-meta"><span class="dedicated-pkg-desc">${userLabel} · ${planName || '未知套餐'}</span></div>` : ''}
+        </div>
+      `);
+    }
+  }
+
+  if (cards.length === 0) {
     block.classList.add('hidden');
     list.innerHTML = '';
     if (nums) nums.innerHTML = '';
@@ -345,43 +379,10 @@ function renderDedicatedPackages(packages) {
 
   block.classList.remove('hidden');
   if (nums) {
-    nums.textContent = `${packages.length} 个资源包`;
+    nums.textContent = `${cards.length} 个资源包`;
   }
 
-  list.innerHTML = packages.map((pkg) => {
-    const title = formatDedicatedPackageTitle(pkg);
-    const total = Number(pkg.total || 0);
-    const used = Number(pkg.used || 0);
-    const remaining = Number(
-      pkg.remaining !== undefined
-        ? pkg.remaining
-        : Math.max(0, total - used)
-    );
-    const unit = pkg.unit || '积分';
-    const expiresAt = pkg.expiresAt || pkg.expires_at || pkg.expire_time;
-    const expiryText = expiresAt ? formatDate(expiresAt) : '';
-    const desc = pkg.description && pkg.description !== title ? pkg.description : '';
-
-    return `
-      <div class="dedicated-package-card">
-        <div class="dedicated-pkg-header">
-          <span class="dedicated-pkg-title">
-            <span class="dot dot-blue"></span>
-            ${title}
-          </span>
-          <span class="dedicated-pkg-nums tabular-nums">
-            剩余 <strong>${formatNumber(remaining)}</strong>${total > 0 ? ` / 总计 ${formatNumber(total)}` : ''} ${unit}
-          </span>
-        </div>
-        ${(desc || expiryText) ? `
-          <div class="dedicated-pkg-meta">
-            <span class="dedicated-pkg-desc" title="${desc}">${desc}</span>
-            ${expiryText ? `<span>到期: ${expiryText}</span>` : ''}
-          </div>
-        ` : ''}
-      </div>
-    `;
-  }).join('');
+  list.innerHTML = cards.join('');
 }
 
 function formatThinkingLevel(level) {
@@ -401,7 +402,16 @@ function accountRemaining(quota) {
   if (!quota || quota.error) return 0;
   const u = quota.user_quota || {};
   const a = quota.add_on_quota || {};
-  return Number(u.remaining || 0) + Number(a.remaining || 0);
+  let rem = Number(u.remaining || 0) + Number(a.remaining || 0);
+  const pkgs = quota.dedicated_resource_packages || [];
+  if (Array.isArray(pkgs)) {
+    for (const pkg of pkgs) {
+      if (pkg && pkg.available !== false) {
+        rem += Number(pkg.remaining || 0);
+      }
+    }
+  }
+  return rem;
 }
 
 function renderQuotaAccountLines(items) {
@@ -413,7 +423,8 @@ function renderQuotaAccountLines(items) {
   }
   el.innerHTML = items.map((item) => {
     const label = item.email || item.name || item.user_id || item.id;
-    const rem = accountRemaining(item.quota);
+    const hasError = Boolean(item.error);
+    const rem = hasError ? null : Number(item.remaining || 0);
     const flags = item.flags || {};
     let chips = '';
     if (flags.skip_quota) {
@@ -425,7 +436,7 @@ function renderQuotaAccountLines(items) {
     return `<div class="quota-account-line">
       <span>${label}</span>
       <span class="tabular-nums" style="display: flex; align-items: center; gap: 6px;">
-        ${formatNumber(rem)} 积分
+        ${hasError ? '—' : `${formatNumber(rem)} 积分`}
         ${chips}
       </span>
     </div>`;
@@ -484,8 +495,8 @@ async function loadModels() {
     tbody.innerHTML = '';
 
     if (models.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding: 24px; color: var(--text-dim);">还没有模型列表。加入账号后再点刷新。</td></tr>`;
-      return;
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding: 24px; color: var(--text-dim);">还没有模型列表。加入账号后再点刷新。</td></tr>`;
+      return true;
     }
 
     models.forEach((m) => {
@@ -511,11 +522,6 @@ async function loadModels() {
         badges = `<span class="text-dim">-</span>`;
       }
 
-      // Status badge
-      const statusHtml = m.enable
-        ? `<span class="tag-active">● 启用</span>`
-        : `<span class="tag-inactive">○ 停用</span>`;
-
       tr.innerHTML = `
         <td>
           <div class="model-name">${m.display_name || m.public_id || m.key}</div>
@@ -527,18 +533,78 @@ async function loadModels() {
         <td class="tabular-nums">${formatTokenCount(m.max_input_tokens)}</td>
         <td class="tabular-nums">${formatTokenCount(m.max_output_tokens)}</td>
         <td>${badges}</td>
-        <td>${statusHtml}</td>
       `;
       tbody.appendChild(tr);
     });
+    return true;
   } catch (err) {
-    if (err.message === 'UNAUTHORIZED') return;
-    showToast(`获取模型列表失败: ${err.message}`, 'error');
+    if (err.message === 'UNAUTHORIZED') return false;
+    if (!isRefreshing) showToast(`获取模型列表失败: ${err.message}`, 'error');
+    return false;
+  }
+}
+
+// --- Refresh All (Accounts + Quota + Models) ---
+let isRefreshing = false;
+
+function applyCreditsToAccountTable() {
+  const credits = state.creditsAccounts || [];
+  if (!credits.length) return;
+  const tbody = document.getElementById('accounts-table-body');
+  if (!tbody) return;
+
+  const byId = {};
+  for (const item of credits) {
+    if (item && item.id) byId[item.id] = item;
+  }
+
+  const rows = tbody.querySelectorAll('tr[data-account-id]');
+  rows.forEach((row) => {
+    const id = row.getAttribute('data-account-id');
+    const item = byId[id];
+    if (!item) return;
+    const remCell = row.querySelector('.account-remaining-cell');
+    if (!remCell) return;
+    if (item.error) {
+      remCell.textContent = '—';
+    } else {
+      remCell.textContent = formatNumber(Number(item.remaining || 0));
+    }
+  });
+}
+
+async function refreshAll() {
+  if (isRefreshing) return;
+  const btn = document.getElementById('refresh-all-btn');
+  if (!btn) return;
+
+  isRefreshing = true;
+  btn.disabled = true;
+  btn.textContent = '刷新中…';
+
+  const results = await Promise.allSettled([
+    loadAccounts(),
+    loadQuota(),
+    loadModels(),
+  ]);
+
+  applyCreditsToAccountTable();
+
+  const allOk = results.every((r) => r.status === 'fulfilled' && r.value === true);
+
+  btn.textContent = '刷新';
+  btn.disabled = false;
+  isRefreshing = false;
+
+  if (allOk) {
+    showToast('刷新成功', 'success');
+  } else {
+    showToast('刷新失败', 'error');
   }
 }
 
 function setLoginButtonsDisabled(disabled) {
-  ['login-desktop-btn', 'login-cli-btn'].forEach((id) => {
+  ['login-cli-btn'].forEach((id) => {
     const btn = document.getElementById(id);
     if (btn) btn.disabled = disabled;
   });
@@ -564,7 +630,7 @@ async function startLogin(client) {
     }
 
     window.open(verification_uri, '_blank');
-    showToast(client === 'desktop' ? '已打开桌面端登录页，请在浏览器里完成授权' : '已打开 CLI 登录页，请在浏览器里完成授权', 'info');
+    showToast('已打开 CLI 登录页，请在浏览器里完成授权', 'info');
 
     state.pollStartTime = Date.now();
     pollOAuthStatus(login_id);
@@ -624,14 +690,20 @@ async function loadAccounts() {
     state.accounts = accounts;
     countElem.textContent = `${accounts.length} 个账号`;
     if (!accounts.length) {
-      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 24px; color: var(--text-dim);">还没有账号。用右上角登录桌面端或 CLI，或粘贴官网个人令牌。</td></tr>`;
-      return;
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 24px; color: var(--text-dim);">还没有账号。用右上角登录 CLI，或粘贴官网个人令牌。</td></tr>`;
+      return true;
     }
     tbody.innerHTML = '';
     accounts.forEach((acc) => {
       const tr = document.createElement('tr');
+      tr.setAttribute('data-account-id', acc.id);
       const snap = acc.quota_snapshot || {};
-      const rem = accountRemaining(snap);
+      const hasError = Boolean(snap.error);
+      const snapRem = Number(snap.remaining);
+      const rem = hasError
+        ? null
+        : (Number.isFinite(snapRem) ? snapRem : accountRemaining(snap));
+      const remDisplay = hasError ? '—' : formatNumber(rem);
       const kind = formatAccountKind(acc.kind, acc.client);
       const label = acc.email || acc.name || acc.user_id || acc.id;
       const enabledChecked = acc.enabled ? 'checked' : '';
@@ -645,7 +717,7 @@ async function loadAccounts() {
       if (!flagsHtml) {
         flagsHtml = `<button class="flag-chip" data-action="clear-flags" data-id="${acc.id}" title="当前无标记，点此重置">无标记</button>`;
       }
-      const refreshBtn = (acc.kind === 'pat' || acc.client === 'desktop')
+      const refreshBtn = (acc.kind === 'pat')
         ? `<button class="btn btn-sm" data-action="refresh" data-id="${acc.id}">刷新令牌</button>`
         : '';
       const clearFlagsBtn = `<button class="btn btn-sm" data-action="clear-flags" data-id="${acc.id}" title="清除该账号的跳过标记与错误记录">清除标记</button>`;
@@ -659,7 +731,7 @@ async function loadAccounts() {
           <div class="model-key">${acc.user_id || ''}</div>
           ${err}
         </td>
-        <td class="tabular-nums">${formatNumber(rem)}</td>
+        <td class="tabular-nums account-remaining-cell">${remDisplay}</td>
         <td class="tabular-nums">${formatDate(acc.expires_at)}</td>
         <td><input type="checkbox" data-action="toggle-enabled" data-id="${acc.id}" ${enabledChecked}></td>
         <td>${flagsHtml}</td>
@@ -671,9 +743,12 @@ async function loadAccounts() {
       `;
       tbody.appendChild(tr);
     });
+    applyCreditsToAccountTable();
+    return true;
   } catch (err) {
-    if (err.message === 'UNAUTHORIZED') return;
-    showToast(`获取账号失败: ${err.message}`, 'error');
+    if (err.message === 'UNAUTHORIZED') return false;
+    if (!isRefreshing) showToast(`获取账号失败: ${err.message}`, 'error');
+    return false;
   }
 }
 
@@ -981,12 +1056,8 @@ function setupEventListeners() {
   });
 
   // Top actions
-  document.getElementById('login-desktop-btn').addEventListener('click', () => startLogin('desktop'));
   document.getElementById('login-cli-btn').addEventListener('click', () => startLogin('cli'));
-  document.getElementById('refresh-all-btn').addEventListener('click', () => {
-    showToast('正在刷新账号、额度和模型…', 'info');
-    checkAuthAndLoad();
-  });
+  document.getElementById('refresh-all-btn').addEventListener('click', refreshAll);
 
   // Key operations
   document.getElementById('change-key-btn').addEventListener('click', openKeyModal);

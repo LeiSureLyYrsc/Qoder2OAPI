@@ -291,11 +291,11 @@ def test_cli_payload_keeps_qodercli_session():
     assert payload["business"]["product"] == "cli"
 
 
-def test_desktop_payload_uses_app_session():
+def test_desktop_payload_normalized_to_cli_session():
     req = ChatCompletionRequest(
         model="gpt-4o",
         messages=[ChatMessage(role="user", content="hi")],
     )
     payload, _ = translate_openai_to_qoder(req, user_id="user_123", client="desktop")
-    assert payload["session_type"] == "app"
-    assert payload["business"]["product"] == "app"
+    assert payload["session_type"] == "qodercli"
+    assert payload["business"]["product"] == "cli"

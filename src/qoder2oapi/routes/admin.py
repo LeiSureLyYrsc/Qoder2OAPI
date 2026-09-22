@@ -11,7 +11,6 @@ from qoder2oapi.identity import normalize_client
 from qoder2oapi.names import public_id_for_key, public_name_for_key
 from qoder2oapi.oauth import poll_device_flow, start_device_flow
 from qoder2oapi.pool import pool
-from qoder2oapi.quota import fetch_quota
 from qoder2oapi.refresh import ensure_fresh, exchange_pat, needs_refresh
 from qoder2oapi.runtime_settings import runtime_settings
 from qoder2oapi.token_store import token_store
@@ -165,7 +164,7 @@ async def refresh_account_token(account_id: str) -> dict[str, Any]:
     if not acc:
         raise HTTPException(status_code=404, detail="Account not found")
     if not needs_refresh(acc):
-        raise HTTPException(status_code=400, detail="Only PAT and desktop OAuth accounts can be manually refreshed")
+        raise HTTPException(status_code=400, detail="Only PAT accounts can be manually refreshed")
 
     acc.expires_at = 0
     refreshed = await ensure_fresh(acc, force=True)
@@ -174,14 +173,9 @@ async def refresh_account_token(account_id: str) -> dict[str, Any]:
     return {"status": "ok", "account": refreshed.public_dump()}
 
 
-@router.get("/quota")
-async def admin_quota() -> dict[str, Any]:
-    return await fetch_quota()
-
-
 @router.get("/models")
 async def admin_models() -> dict[str, Any]:
-    models = await catalog_manager.fetch_models()
+    models = await catalog_manager.fetch_models(force_cli_identity=True)
     cards = []
     for item in models:
         if not isinstance(item, dict) or not item.get("key"):
@@ -200,7 +194,6 @@ async def admin_models() -> dict[str, Any]:
                 "max_output_tokens": catalog_manager.get_max_output_tokens(item),
                 "thinking_levels": thinking,
                 "default_thinking": catalog_manager.get_default_thinking(item),
-                "enable": item.get("enable", True),
             }
         )
     return {"models": cards}

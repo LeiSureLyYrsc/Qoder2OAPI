@@ -9,11 +9,7 @@ from qoder2oapi.catalog import catalog_manager
 from qoder2oapi.constants import (
     CLI_BUSINESS_PRODUCT,
     CLI_SESSION_TYPE,
-    DESKTOP_APP_VERSION,
-    DESKTOP_BUSINESS_PRODUCT,
-    DESKTOP_SESSION_TYPE,
 )
-from qoder2oapi.identity import is_desktop
 from qoder2oapi.models import ChatCompletionRequest
 
 
@@ -177,10 +173,9 @@ def translate_openai_to_qoder(
     }
 
     system_text = "\n\n".join(system_msgs)
-    desktop = is_desktop(client)
-    session_type = DESKTOP_SESSION_TYPE if desktop else CLI_SESSION_TYPE
-    business_product = DESKTOP_BUSINESS_PRODUCT if desktop else CLI_BUSINESS_PRODUCT
-    business_version = DESKTOP_APP_VERSION if desktop else "1.0.0"
+    session_type = CLI_SESSION_TYPE
+    business_product = CLI_BUSINESS_PRODUCT
+    business_version = "1.0.0"
 
     payload: dict[str, Any] = {
         "request_id": str(uuid.uuid4()),

@@ -4,14 +4,11 @@ import uuid
 from typing import Any
 from qoder2oapi.constants import (
     CLIENT_CLI,
-    DESKTOP_CLIENT_TYPE,
-    DESKTOP_USER_AGENT,
-    DEVICE_TOKEN_REFRESH,
     JOB_TOKEN_EXCHANGE,
     JOB_TOKEN_REFRESH,
 )
 from qoder2oapi.http import get_http_client
-from qoder2oapi.identity import is_desktop
+from qoder2oapi.identity import normalize_client
 from qoder2oapi.models import AccountRecord
 from qoder2oapi.oauth import _parse_expiry, extract_user_id, fetch_userinfo
 from qoder2oapi.runtime_settings import runtime_settings
@@ -89,12 +86,11 @@ async def exchange_pat(pat: str) -> AccountRecord:
 
 
 def needs_refresh(account: AccountRecord) -> bool:
-    if account.kind == "pat":
-        return True
-    return account.kind == "oauth" and is_desktop(account.client)
+    return account.kind == "pat"
 
 
 async def ensure_fresh(account: AccountRecord, force: bool = False) -> AccountRecord:
+    account.client = normalize_client(account.client)
     if not needs_refresh(account):
         return account
 
@@ -104,8 +100,6 @@ async def ensure_fresh(account: AccountRecord, force: bool = False) -> AccountRe
         latest = token_store.get(account.id) if account.id else None
         if latest and latest.access_token != account.access_token:
             return latest
-        if account.kind == "oauth" and is_desktop(account.client):
-            return await _ensure_fresh_desktop_locked(account, force=force)
         return await _ensure_fresh_locked(account, force=force)
 
 
@@ -113,77 +107,6 @@ def _mark_auth_failed(account: AccountRecord, error: str) -> AccountRecord:
     account.last_error = error
     if runtime_settings.auto_mark_auth:
         account.skip_auth = True
-    token_store.upsert(account)
-    return account
-
-
-async def _ensure_fresh_desktop_locked(account: AccountRecord, force: bool = False) -> AccountRecord:
-    if not account.user_id:
-        user_info = await fetch_userinfo(account.access_token)
-        user_id = extract_user_id(user_info, include_id=True)
-        if user_id:
-            account.user_id = user_id
-            account.name = str(user_info.get("name") or user_info.get("nickname") or account.name)
-            account.email = str(user_info.get("email") or account.email)
-            account.skip_auth = False
-            account.last_error = ""
-            token_store.upsert(account)
-
-    now_ms = int(time.time() * 1000)
-    if not force and account.expires_at - now_ms > 300_000 and account.user_id:
-        if account.skip_auth or account.last_error:
-            account.skip_auth = False
-            account.last_error = ""
-            token_store.upsert(account)
-        return account
-
-    if not account.refresh_token:
-        return _mark_auth_failed(account, "Missing refresh token for desktop OAuth")
-
-    client = get_http_client()
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "User-Agent": DESKTOP_USER_AGENT,
-        "Cosy-ClientType": DESKTOP_CLIENT_TYPE,
-        "Authorization": f"Bearer {account.access_token}",
-    }
-    try:
-        resp = await client.post(
-            DEVICE_TOKEN_REFRESH,
-            headers=headers,
-            json={"refresh_token": account.refresh_token},
-        )
-    except Exception as e:
-        return _mark_auth_failed(account, f"Desktop token refresh failed: {e}")
-
-    if resp.status_code != 200:
-        return _mark_auth_failed(account, f"Desktop token refresh failed: HTTP {resp.status_code}")
-
-    data = resp.json()
-    token_data = data.get("data") if isinstance(data.get("data"), dict) else data
-    new_access_token = _extract_access_token(token_data)
-    if not new_access_token:
-        return _mark_auth_failed(account, "Desktop token refresh returned no token")
-
-    account.access_token = new_access_token
-    account.refresh_token = (
-        token_data.get("refresh_token")
-        or token_data.get("refreshToken")
-        or account.refresh_token
-    )
-    account.expires_at = _parse_expiry(token_data)
-    if not account.user_id:
-        user_info = await fetch_userinfo(account.access_token)
-        user_id = extract_user_id(user_info, include_id=True)
-        if user_id:
-            account.user_id = user_id
-            account.name = str(user_info.get("name") or user_info.get("nickname") or account.name)
-            account.email = str(user_info.get("email") or account.email)
-    if not account.user_id:
-        return _mark_auth_failed(account, "Qoder user ID could not be resolved for desktop OAuth")
-    account.skip_auth = False
-    account.last_error = ""
     token_store.upsert(account)
     return account
 
@@ -285,6 +208,7 @@ async def _ensure_fresh_locked(account: AccountRecord, force: bool = False) -> A
         if new_refresh_token:
             account.refresh_token = new_refresh_token
         account.expires_at = new_expires_at
+        account.client = normalize_client(account.client)
         if not account.user_id:
             user_info = await fetch_userinfo(account.access_token)
             user_id = extract_user_id(user_info, include_id=True)

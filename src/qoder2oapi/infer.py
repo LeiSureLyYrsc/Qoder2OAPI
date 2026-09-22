@@ -41,6 +41,19 @@ def _is_quota_error(err_content: Any) -> bool:
     return False
 
 
+def _extract_error_code(err_content: Any) -> int | None:
+    if isinstance(err_content, dict):
+        code = err_content.get("code")
+        if isinstance(code, int):
+            return code
+        if isinstance(code, str) and code.isdigit():
+            return int(code)
+        inner_err = err_content.get("error")
+        if isinstance(inner_err, dict):
+            return _extract_error_code(inner_err)
+    return None
+
+
 def _encode_chat_body(request: ChatCompletionRequest, account) -> tuple[bytes, dict[str, Any], dict[str, Any]]:
     payload, model_data = translate_openai_to_qoder(
         request,
@@ -69,6 +82,19 @@ def _chat_headers(encoded_body_bytes: bytes, account, payload: dict[str, Any], m
     return headers
 
 
+def _error_response(message: str, status_code: int, code: int | None = None) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": {
+                "message": message,
+                "type": "upstream_error",
+                "code": code if code is not None else status_code,
+            }
+        },
+    )
+
+
 async def execute_infer(
     request: ChatCompletionRequest,
     stream: bool,
@@ -78,7 +104,8 @@ async def execute_infer(
         raise HTTPException(status_code=401, detail="No usable Qoder account. Please log in or check quotas.")
 
     client = get_http_client()
-    all_auth_errors = True
+    last_status_code = 401
+    last_error_code: int | None = None
 
     for _ in range(len(usable_accounts)):
         account = await pool.next_account()
@@ -100,6 +127,7 @@ async def execute_infer(
             headers=headers,
         )
         upstream_resp = await client.send(req, stream=True)
+        last_status_code = upstream_resp.status_code
 
         # Handle 401 / 403
         if upstream_resp.status_code in (401, 403):
@@ -111,6 +139,7 @@ async def execute_infer(
                     headers = _chat_headers(encoded_body_bytes, account, payload, model_data)
                     req2 = client.build_request("POST", CHAT_URL, content=encoded_body_bytes, headers=headers)
                     upstream_resp = await client.send(req2, stream=True)
+                    last_status_code = upstream_resp.status_code
                     if upstream_resp.status_code in (401, 403):
                         await upstream_resp.aclose()
                         pool.mark_skip_auth(account.id, f"HTTP {upstream_resp.status_code}")
@@ -124,7 +153,6 @@ async def execute_infer(
 
         # Handle 429
         if upstream_resp.status_code == 429:
-            all_auth_errors = False
             await upstream_resp.aclose()
             pool.mark_skip_quota(account.id, "HTTP 429 Too Many Requests")
             continue
@@ -132,15 +160,9 @@ async def execute_infer(
         if upstream_resp.status_code != 200:
             err_body = await upstream_resp.aread()
             await upstream_resp.aclose()
-            return JSONResponse(
-                status_code=upstream_resp.status_code,
-                content={
-                    "error": {
-                        "message": f"Upstream error {upstream_resp.status_code}: {err_body.decode('utf-8', errors='replace')}",
-                        "type": "upstream_error",
-                        "code": upstream_resp.status_code,
-                    }
-                },
+            return _error_response(
+                f"Upstream error {upstream_resp.status_code}: {err_body.decode('utf-8', errors='replace')}",
+                upstream_resp.status_code,
             )
 
         # If 200
@@ -168,14 +190,29 @@ async def execute_infer(
                 await upstream_resp.aclose()
 
             if "error" in result:
-                if _is_quota_error(result.get("error")):
-                    all_auth_errors = False
-                    pool.mark_skip_quota(account.id, f"Accumulate quota error: {result.get('error')}")
+                err_body = result.get("error")
+                code = _extract_error_code(err_body)
+                if code is not None:
+                    # Proxy upstream error code as HTTP status; still mark quota-ish codes as skip.
+                    if _is_quota_error(err_body):
+                        pool.mark_skip_quota(account.id, f"Accumulate quota error: {err_body}")
+                    return _error_response(
+                        str(err_body.get("message") if isinstance(err_body, dict) else err_body),
+                        code,
+                        code=code,
+                    )
+                if _is_quota_error(err_body):
+                    pool.mark_skip_quota(account.id, f"Accumulate quota error: {err_body}")
                     continue
-                return JSONResponse(status_code=500, content=result)
+                return _error_response(
+                    str(err_body.get("message") if isinstance(err_body, dict) else err_body),
+                    500,
+                    code=None,
+                )
             return JSONResponse(content=result)
 
-    # If all usable accounts exhausted
-    status_code = 401 if all_auth_errors else 429
-    detail = "All accounts failed with authentication errors" if all_auth_errors else "All accounts exceeded quota or rate limits"
-    raise HTTPException(status_code=status_code, detail=detail)
+    # If all usable accounts exhausted, return the last upstream HTTP status code.
+    detail = f"All accounts failed (last upstream HTTP {last_status_code})"
+    if last_error_code is not None:
+        detail = f"All accounts failed (last upstream error code {last_error_code})"
+    raise HTTPException(status_code=last_status_code, detail=detail)

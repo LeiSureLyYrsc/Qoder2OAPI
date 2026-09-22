@@ -7,7 +7,7 @@ from qoder2oapi.infer import execute_infer
 from qoder2oapi.models import ChatCompletionRequest, ModelCard, ModelListResponse
 from qoder2oapi.names import public_id_for_key
 from qoder2oapi.pool import pool
-from qoder2oapi.quota import fetch_quota
+from qoder2oapi.quota import fetch_credits, fetch_quota
 from qoder2oapi.refresh import ensure_fresh, needs_refresh
 from qoder2oapi.token_store import token_store
 
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/v1", dependencies=[Depends(verify_api_key)])
 
 @router.get("/models", response_model=ModelListResponse)
 async def list_models() -> ModelListResponse:
-    raw_models = await catalog_manager.fetch_models()
+    raw_models = await catalog_manager.fetch_models(force_cli_identity=True)
     source = raw_models or [
         {"key": k} for k in catalog_manager.models_by_key.keys()
     ]
@@ -63,6 +63,11 @@ async def billing_usage() -> dict[str, Any]:
         "total_usage": quota.get("total_usage", 0.0),
         "daily_costs": [],
     }
+
+
+@router.get("/dashboard/billing/credits")
+async def billing_credits() -> dict[str, Any]:
+    return await fetch_credits()
 
 
 @router.get("/dashboard/billing/subscription")

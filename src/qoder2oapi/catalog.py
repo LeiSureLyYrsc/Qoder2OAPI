@@ -161,7 +161,7 @@ class CatalogManager:
                     return val
         return levels[-1]
 
-    async def fetch_models(self) -> list[dict[str, Any]]:
+    async def fetch_models(self, force_cli_identity: bool = False) -> list[dict[str, Any]]:
         usable = [acc for acc in token_store.list_accounts() if acc.enabled and not acc.skip_auth and acc.access_token]
         record = usable[0] if usable else token_store.load_token()
         if not record:
@@ -171,6 +171,10 @@ class CatalogManager:
             if record.skip_auth or not record.user_id:
                 return self.raw_models
 
+        creds = record.model_dump()
+        if force_cli_identity:
+            creds["client"] = "cli"
+
         client = get_http_client()
         urls = (
             [f"{MODEL_LIST_ALGO_URL}?Encode=1", MODEL_LIST_ALGO_URL, MODEL_LIST_URL]
@@ -178,11 +182,14 @@ class CatalogManager:
             else [MODEL_LIST_URL, f"{MODEL_LIST_ALGO_URL}?Encode=1", MODEL_LIST_ALGO_URL]
         )
 
-        resp = await _fetch_model_response(client, urls, record.model_dump())
+        resp = await _fetch_model_response(client, urls, creds)
         if needs_refresh(record) and resp is not None and resp.status_code in (401, 403):
             record = await ensure_fresh(record, force=True)
             if not record.skip_auth and record.user_id:
-                resp = await _fetch_model_response(client, urls, record.model_dump())
+                creds = record.model_dump()
+                if force_cli_identity:
+                    creds["client"] = "cli"
+                resp = await _fetch_model_response(client, urls, creds)
 
         if resp and resp.status_code == 200:
             data = resp.json()

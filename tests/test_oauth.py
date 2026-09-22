@@ -14,16 +14,17 @@ def test_cli_device_flow_url_has_no_client_id():
     assert "biz_variant=" not in flow["verification_uri"]
 
 
-def test_desktop_device_flow_url_wraps_sign_in():
+def test_desktop_input_treated_as_cli():
     flow = start_device_flow("desktop")
-    assert flow["client"] == "desktop"
-    assert flow["verification_uri"].startswith("https://qoder.cn/users/sign-in?")
-    assert "biz_variant=qoder" in flow["verification_uri"]
-    assert "oauth_callback=" in flow["verification_uri"]
-    assert "732aef47-9cf2-46a2-95fe-4cebb5d0d1fa" in flow["verification_uri"]
-    decoded = urllib.parse.unquote(flow["verification_uri"])
-    assert "https://qoder.cn/device/selectAccounts" in decoded
-    assert "client_id=732aef47-9cf2-46a2-95fe-4cebb5d0d1fa" in decoded
+    assert flow["client"] == "cli"
+    assert flow["verification_uri"].startswith("https://qoder.com.cn/device/selectAccounts")
+    assert "client_id=" not in flow["verification_uri"]
+    assert "biz_variant=" not in flow["verification_uri"]
+
+
+def test_app_input_treated_as_cli():
+    flow = start_device_flow("app")
+    assert flow["client"] == "cli"
 
 
 @pytest.mark.asyncio
@@ -137,7 +138,7 @@ async def test_oauth_userinfo_id_is_used_when_poll_omits_user_id(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_desktop_oauth_poll_saves_desktop_client(monkeypatch):
+async def test_desktop_oauth_poll_saves_cli_client(monkeypatch):
     flow = start_device_flow("desktop")
 
     class MockPollResp:
@@ -170,7 +171,7 @@ async def test_desktop_oauth_poll_saves_desktop_client(monkeypatch):
     monkeypatch.setattr(oauth, "get_http_client", lambda: MockClient())
     result = await poll_device_flow(flow["login_id"])
     assert result["status"] == "ok"
-    assert result["user"]["client"] == "desktop"
+    assert result["user"]["client"] == "cli"
     saved = oauth.token_store.list_accounts()[0]
-    assert saved.client == "desktop"
+    assert saved.client == "cli"
     assert saved.kind == "oauth"

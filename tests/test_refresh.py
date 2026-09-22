@@ -378,26 +378,13 @@ async def test_pat_refresh_fail_with_auto_mark_auth_false(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_desktop_oauth_refreshes_via_device_token(monkeypatch):
+async def test_desktop_oauth_not_refreshed_via_device_token(monkeypatch):
     posted = []
-
-    class MockResp:
-        status_code = 200
-
-        def json(self):
-            return {
-                "data": {
-                    "token": "dt-new",
-                    "refresh_token": "rt-new",
-                    "expires_in": 3600,
-                    "user_id": "u1",
-                }
-            }
 
     class MockClient:
         async def post(self, url, *args, **kwargs):
             posted.append(str(url))
-            return MockResp()
+            raise RuntimeError("Should not be called")
 
     from qoder2oapi import refresh
 
@@ -414,7 +401,6 @@ async def test_desktop_oauth_refreshes_via_device_token(monkeypatch):
     )
     ts_mod.token_store.upsert(acc)
     res = await ensure_fresh(acc, force=True)
-    assert "deviceToken/refresh" in posted[0]
-    assert res.access_token == "dt-new"
-    assert res.refresh_token == "rt-new"
-    assert res.skip_auth is False
+    assert posted == []
+    assert res.access_token == "dt-old"
+    assert res.client == "cli"

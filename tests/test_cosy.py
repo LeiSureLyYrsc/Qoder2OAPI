@@ -52,7 +52,7 @@ def test_build_cosy_headers_get_empty_body():
     assert "Cosy-Business-Product" not in headers
 
 
-def test_desktop_cosy_headers_use_app_identity():
+def test_desktop_record_still_uses_cli_identity():
     url = "https://gateway.qoder.com.cn/algo/api/v2/service/pro/sse/agent_chat_generation"
     creds = {
         "user_id": "u1",
@@ -61,7 +61,7 @@ def test_desktop_cosy_headers_use_app_identity():
         "client": "desktop",
     }
     headers = build_cosy_headers(b"{}", url, creds)
-    assert headers["Cosy-Clienttype"] == "10"
-    assert headers["Cosy-Business-Product"] == "app"
-    assert headers["X-IDE-Platform"] == "app"
-    assert headers["User-Agent"] == "Qoder"
+    assert headers["Cosy-Clienttype"] == "5"
+    assert "Cosy-Business-Product" not in headers
+    assert "User-Agent" not in headers
+    assert headers["Cosy-Version"] == "1.0.0"

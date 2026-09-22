@@ -1,8 +1,12 @@
+import time
+from typing import Any
 import httpx
 import pytest
 from qoder2oapi.app import create_app
 from qoder2oapi.catalog import catalog_manager
 from qoder2oapi.config import settings
+from qoder2oapi.models import AccountRecord
+import qoder2oapi.token_store as ts_mod
 
 
 @pytest.fixture
@@ -10,6 +14,45 @@ def test_client():
     app = create_app()
     transport = httpx.ASGITransport(app=app)
     return httpx.AsyncClient(transport=transport, base_url="http://test")
+
+
+@pytest.fixture
+def mock_fetch_quota():
+    async def _fetch_quota():
+        return {
+            "object": "list",
+            "total_usage": 10.0,
+            "hard_limit": 100.0,
+            "user_quota": {"total": 100, "used": 95, "remaining": 5, "unit": "credits"},
+            "add_on_quota": {"total": 50, "used": 40, "remaining": 10, "unit": "credits"},
+            "dedicated_resource_packages": [
+                {"title": "QwQ", "plan_name": "QwQ", "total": 100, "used": 50, "remaining": 50, "unit": "credits", "available": True}
+            ],
+            "expires_at": 2000,
+            "user_type": "personal",
+            "is_quota_exceeded": False,
+            "accounts": [
+                {
+                    "id": "acc-1",
+                    "user_id": "u-1",
+                    "email": "a@b.com",
+                    "name": "Tester",
+                    "kind": "pat",
+                    "client": "cli",
+                    "user_type": "personal",
+                    "expires_at": 2000,
+                    "quota": {
+                        "user_quota": {"total": 100, "used": 95, "remaining": 5, "unit": "credits"},
+                        "add_on_quota": {"total": 50, "used": 40, "remaining": 10, "unit": "credits"},
+                        "dedicated_resource_packages": [
+                            {"title": "QwQ", "plan_name": "QwQ", "total": 100, "used": 50, "remaining": 50, "unit": "credits", "available": True}
+                        ],
+                    },
+                    "flags": {"enabled": True, "skip_quota": False, "skip_auth": False},
+                }
+            ],
+        }
+    return _fetch_quota
 
 
 @pytest.mark.asyncio
@@ -241,3 +284,82 @@ async def test_add_pat_refreshes_model_catalog(test_client, monkeypatch):
     assert response.status_code == 200
     assert response.json()["account"]["user_id"] == "real-user-id"
     assert refreshed is True
+
+
+@pytest.mark.asyncio
+async def test_old_admin_quota_route_returns_404(test_client):
+    async with test_client as client:
+        headers = {"Authorization": f"Bearer {settings.qoder2oapi_api_key}"}
+        resp = await client.get("/api/admin/quota", headers=headers)
+        assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_billing_credits_route(mock_fetch_quota, monkeypatch, test_client):
+    from qoder2oapi import quota
+    monkeypatch.setattr(quota, "fetch_quota", mock_fetch_quota)
+
+    async with test_client as client:
+        headers = {"Authorization": f"Bearer {settings.qoder2oapi_api_key}"}
+        resp = await client.get("/v1/dashboard/billing/credits", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["object"] == "billing_credits"
+        assert "general" in data
+        assert "addon" in data
+        assert "dedicated" in data
+        assert "accounts" in data
+        assert data["accounts"][0]["remaining"] == 65
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_uses_cli_identity_when_fetching(monkeypatch, test_client):
+    from qoder2oapi import catalog
+    catalog_manager.raw_models = []
+    catalog_manager.models_by_key = {}
+    fetched_creds: dict[str, Any] | None = None
+
+    class MockResp:
+        status_code = 200
+
+        def json(self):
+            return {
+                "body": {
+                    "chat": [
+                        {"key": "my-model-key", "display_name": "My Model", "enable": False},
+                    ]
+                }
+            }
+
+    class MockClient:
+        async def get(self, url, headers=None, **kwargs):
+            nonlocal fetched_creds
+            fetched_creds = {"client": headers.get("Cosy-Clienttype"), "session": headers.get("Cosy-Business-Product")}
+            return MockResp()
+
+    monkeypatch.setattr(catalog, "get_http_client", lambda: MockClient())
+
+    ts_mod.token_store.clear()
+    ts_mod.token_store.upsert(
+        AccountRecord(
+            id="acc-cli-model",
+            kind="oauth",
+            client="desktop",
+            access_token="tok-model",
+            user_id="u-model",
+            machine_id="m-model",
+            expires_at=int(time.time() * 1000) + 60 * 60 * 1000,
+        )
+    )
+
+    async with test_client as client:
+        headers = {"Authorization": f"Bearer {settings.qoder2oapi_api_key}"}
+        resp = await client.get("/v1/models", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        ids = [m["id"] for m in data["data"]]
+        assert "cn/my-model-key" in ids
+        assert fetched_creds is not None
+        assert fetched_creds["client"] == "5"
+        assert fetched_creds["session"] is None
+

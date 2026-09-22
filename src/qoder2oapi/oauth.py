@@ -9,12 +9,7 @@ from typing import Any
 
 from qoder2oapi.constants import (
     AUTH_BASE_CLI,
-    AUTH_BASE_DESKTOP,
     CLIENT_CLI,
-    CLIENT_DESKTOP,
-    DESKTOP_BIZ_VARIANT,
-    DESKTOP_CLIENT_ID,
-    DESKTOP_SIGN_IN,
     DEVICE_POLL,
     LOGIN_PATH,
     USERINFO_URL,
@@ -51,21 +46,21 @@ def _base64url_no_pad(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
 
 
-def _select_accounts_url(client: str, challenge: str, nonce: str, machine_id: str) -> str:
+def _select_accounts_url(challenge: str, nonce: str, machine_id: str) -> str:
     params = {
         "challenge": challenge,
         "challenge_method": "S256",
         "machine_id": machine_id,
         "nonce": nonce,
     }
-    auth_base = AUTH_BASE_DESKTOP if client == CLIENT_DESKTOP else AUTH_BASE_CLI
-    if client == CLIENT_DESKTOP:
-        params["client_id"] = DESKTOP_CLIENT_ID
-    return f"{auth_base}{LOGIN_PATH}?{urllib.parse.urlencode(params)}"
+    return f"{AUTH_BASE_CLI}{LOGIN_PATH}?{urllib.parse.urlencode(params)}"
 
 
 def start_device_flow(client: str = CLIENT_CLI) -> dict[str, str]:
     client = normalize_client(client)
+    if client != CLIENT_CLI:
+        raise ValueError(f"Unsupported client: {client}. Only CLI device flow is supported.")
+
     verifier_bytes = os.urandom(32)
     verifier = _base64url_no_pad(verifier_bytes)
     challenge = _base64url_no_pad(hashlib.sha256(verifier.encode("utf-8")).digest())
@@ -83,17 +78,10 @@ def start_device_flow(client: str = CLIENT_CLI) -> dict[str, str]:
     )
     _pending_sessions[login_id] = session
 
-    select_accounts = _select_accounts_url(client, challenge, nonce, machine_id)
-    if client == CLIENT_DESKTOP:
-        verification_uri = (
-            f"{DESKTOP_SIGN_IN}?"
-            f"{urllib.parse.urlencode({'biz_variant': DESKTOP_BIZ_VARIANT, 'oauth_callback': select_accounts})}"
-        )
-    else:
-        verification_uri = select_accounts
+    select_accounts = _select_accounts_url(challenge, nonce, machine_id)
     return {
         "login_id": login_id,
-        "verification_uri": verification_uri,
+        "verification_uri": select_accounts,
         "machine_id": machine_id,
         "client": client,
     }

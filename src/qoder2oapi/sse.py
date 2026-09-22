@@ -4,13 +4,28 @@ import time
 from typing import Any
 
 
+def _upstream_code_from_text(err_msg: str) -> int | None:
+    try:
+        parsed = json.loads(err_msg)
+        if isinstance(parsed, dict):
+            code = parsed.get("code")
+            if isinstance(code, int):
+                return code
+            if isinstance(code, str) and code.isdigit():
+                return int(code)
+    except Exception:
+        pass
+    return None
+
+
 def _error_frames(err_msg: str) -> list[str]:
+    code = _upstream_code_from_text(err_msg) or 500
     err_obj = {
         "error": {
             "message": err_msg,
             "type": "qoder_error",
             "param": None,
-            "code": 500,
+            "code": code,
         }
     }
     return [f"data: {json.dumps(err_obj)}\n\n", "data: [DONE]\n\n"]
@@ -51,6 +66,21 @@ async def unwrap_sse_stream(byte_lines: AsyncIterator[str]) -> AsyncIterator[str
             for frame in _error_frames(str(err_body)):
                 yield frame
             break
+
+        # Some upstream responses carry HTTP 200 / statusCodeValue 200 but the body itself is an error JSON.
+        if status_code == 200:
+            inner = envelope.get("body")
+            if isinstance(inner, str):
+                try:
+                    parsed = json.loads(inner)
+                except Exception:
+                    parsed = None
+            else:
+                parsed = inner if isinstance(inner, dict) else None
+            if isinstance(parsed, dict) and "code" in parsed and "message" in parsed and "choices" not in parsed:
+                for frame in _error_frames(str(inner)):
+                    yield frame
+                break
 
         inner = envelope.get("body")
         if inner is None:

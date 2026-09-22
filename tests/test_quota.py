@@ -1,7 +1,7 @@
 import time
 import pytest
 from qoder2oapi.models import AccountRecord
-from qoder2oapi.quota import fetch_quota, parse_quota_data, remaining_credits, account_exceeded
+from qoder2oapi.quota import fetch_credits, fetch_quota, parse_quota_data, remaining_credits, account_exceeded
 import qoder2oapi.token_store as ts_mod
 
 
@@ -249,6 +249,46 @@ def test_quota_dedicated_packages_parsing_and_remaining():
     assert parsed["hard_limit"] == 1000 + 0 + (500 + 200)  # 1700
 
 
+def test_quota_dedicated_package_title_and_recognition():
+    fixture = {
+        "userType": "team",
+        "userQuota": {"total": 100, "used": 100, "remaining": 0},
+        "addOnQuota": {"total": 0, "used": 0, "remaining": 0},
+        "dedicatedResourcePackages": [
+            {
+                "packageName": "Qwen-Exclusive",
+                "displayLabels": [
+                    {"dimension": "title", "value": "Qwen-Title", "valueI18n": {"zh-CN": "通义千问专属"}}
+                ],
+                "remaining": 50,
+                "available": True,
+            },
+            {
+                "name": "",
+                "title": "专属资源包",
+                "remaining": 30,
+                "available": True,
+            },
+            {
+                "description": "   ",
+                "remaining": 20,
+                "available": True,
+            },
+        ],
+    }
+    parsed = parse_quota_data(fixture)
+    pkgs = parsed["dedicated_resource_packages"]
+    assert len(pkgs) == 3
+    assert pkgs[0]["title"] == "通义千问专属"
+    assert pkgs[0]["plan_name"] == "Qwen-Exclusive"
+    assert pkgs[0]["recognized"] is True
+    assert pkgs[1]["title"] is None
+    assert pkgs[1]["recognized"] is False
+    assert pkgs[2]["title"] is None
+    assert pkgs[2]["recognized"] is False
+    assert remaining_credits(parsed) == 50 + 30 + 20
+
+
 @pytest.mark.asyncio
 async def test_aggregate_quota_includes_dedicated_packages(monkeypatch):
     acc1 = AccountRecord(
@@ -302,3 +342,59 @@ async def test_aggregate_quota_includes_dedicated_packages(monkeypatch):
     assert aggregated["is_quota_exceeded"] is False
     assert len(aggregated["accounts"]) == 1
     assert "dedicated_resource_packages" in aggregated["accounts"][0]["quota"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_credits_structure_and_per_account_remaining(monkeypatch):
+    acc1 = AccountRecord(
+        id="acc-credits-1",
+        kind="oauth",
+        access_token="tok-credits-1",
+        user_id="u-credits-1",
+        machine_id="m-credits-1",
+        expires_at=int(time.time() * 1000) + 60 * 60 * 1000,
+    )
+    ts_mod.token_store.save_all([acc1])
+
+    class MockResp:
+        status_code = 200
+
+        def json(self):
+            return {
+                "data": {
+                    "userType": "team",
+                    "expiresAt": 2000,
+                    "userQuota": {"total": 100, "used": 100, "remaining": 0, "unit": "credits"},
+                    "addOnQuota": {"total": 50, "used": 10, "remaining": 40, "unit": "credits"},
+                    "dedicated_resource_packages": [
+                        {
+                            "packageName": "QwQ",
+                            "title": "QwQ Exclusive",
+                            "remaining": 25,
+                            "total": 100,
+                            "used": 75,
+                            "available": True,
+                        }
+                    ],
+                }
+            }
+
+    class MockClient:
+        async def get(self, *args, **kwargs):
+            return MockResp()
+
+    from qoder2oapi import quota
+    monkeypatch.setattr(quota, "get_http_client", lambda: MockClient())
+
+    credits = await fetch_credits()
+    assert credits["object"] == "billing_credits"
+    assert credits["general"]["remaining"] == 0
+    assert credits["addon"]["remaining"] == 40
+    assert len(credits["dedicated"]) == 1
+    assert credits["dedicated"][0]["title"] == "QwQ Exclusive"
+    assert credits["dedicated"][0]["plan_name"] == "QwQ"
+    assert credits["dedicated"][0]["remaining"] == 25
+    assert credits["accounts"][0]["remaining"] == 0 + 40 + 25
+    assert credits["accounts"][0]["general"]["remaining"] == 0
+    assert credits["accounts"][0]["addon"]["remaining"] == 40
+    assert len(credits["accounts"][0]["dedicated"]) == 1

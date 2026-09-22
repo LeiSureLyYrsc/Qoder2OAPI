@@ -16,15 +16,14 @@ uv run qoder2oapi
 
 默认监听 `127.0.0.1:8000`。首次启动会生成代理 API Key，打印到终端并写入 `data/api_key.txt`。
 
-打开 http://127.0.0.1:8000 ，粘贴该 Key。然后可以用浏览器「登录桌面端」「登录 CLI」或粘贴 Qoder PAT（`pt-...`，来自 [账号集成](https://qoder.cn/account/integrations)）把账号加入号池。
+打开 http://127.0.0.1:8000 ，粘贴该 Key。然后可以用浏览器「登录 CLI」或粘贴 Qoder PAT（`pt-...`，来自 [账号集成](https://qoder.cn/account/integrations)）把账号加入号池。
 
-三种登录并存：
+两种登录方式：
 
-- **桌面端 OAuth**：按 Qoder CN 桌面客户端身份登录（`client_id`、`qoder.cn`）。聊天走桌面端请求头；token 过期后自动 `deviceToken/refresh`。
-- **CLI OAuth**：沿用原来的浏览器登录。聊天走 CLI 身份；失效后需重新登录。
+- **CLI OAuth**：浏览器完成设备流授权。聊天走 CLI 身份；过期后需要重新登录。
 - **官网 PAT**：兑换成短命 job token；过期后自动 `jobToken/refresh`，失败再重新兑换。
 
-PAT 不是本代理的 API Key。请求按号池轮询。控制台可分别配置“额度耗尽”和“登录失效”的自动标记策略；额度自动标记默认关闭，避免通用积分归零时误跳过仍有 Qwen 专属积分的账号。点标记或「清除标记」后可重新进入轮询。设置保存在 `data/settings.json`，号池明文保存在 `data/accounts.json`，控制台可导出/导入（合并或整池替换）。导出文件含登录凭证，不要发到公开地方。`/v1/dashboard/billing/usage` 的 credits 是号池合计，并单独返回专属资源包。
+PAT 不是本代理的 API Key。请求按号池轮询。控制台可分别配置“额度耗尽”和“登录失效”的自动标记策略；额度自动标记默认关闭，避免通用积分归零时误跳过仍有 Qwen 专属积分的账号。点标记或「清除标记」后可重新进入轮询。设置保存在 `data/settings.json`，号池明文保存在 `data/accounts.json`，控制台可导出/导入（合并或整池替换）。导出文件含登录凭证，不要发到公开地方。账号剩余积分含可用专属资源包；`/v1/dashboard/billing/credits` 返回号池通用、加量、专属额度与每个账号的剩余。
 
 ## 调用
 
@@ -41,8 +40,11 @@ curl http://127.0.0.1:8000/v1/chat/completions \
 
 - `GET /v1/models`
 - `POST /v1/chat/completions`（支持 `stream` 与 `tools`）
-- `GET /v1/dashboard/billing/usage`（credits，不是美元）
-- `GET /v1/dashboard/billing/subscription`
+- `GET /v1/dashboard/billing/usage`（credits，不是美元；保持兼容）
+- `GET /v1/dashboard/billing/subscription`（保持兼容）
+- `GET /v1/dashboard/billing/credits`（返回号池 `general` / `addon` / `dedicated` 与每个账号的剩余）
+
+管理端旧路由 `GET /api/admin/quota` 已删除，请改用 `/v1/dashboard/billing/credits`。
 
 `GET /v1/models` 返回带 `cn/` 前缀的公开名（如 `cn/deepseek-v4-pro`、`cn/qwen3.7-max`）。不带前缀的公开名和内部 key（`dmodel` 等）仍可调用。最新版客户端显示的 DeepSeek-Flash 使用稳定公开 ID `cn/deepseek-v4-flash`（内部 `dfmodel`）；V4.1-Flash 写法也作为兼容别名处理。
 
