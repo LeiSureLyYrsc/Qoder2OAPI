@@ -262,6 +262,19 @@
               </div>
             </div>
           </div>
+
+          <div class="dispatch-mode-block">
+            <div class="dispatch-mode-head">
+              <span class="dispatch-mode-label">调度策略</span>
+              <div class="segmented" id="dispatch-mode-group" role="group" aria-label="调度策略">
+                <button type="button" class="segment-btn" data-mode="poll">轮询</button>
+                <button type="button" class="segment-btn" data-mode="failover">故障转移</button>
+              </div>
+            </div>
+            <div class="field-hint">
+              轮询：每个请求在可用账号间轮转，分散负载（默认）。故障转移：粘住当前账号，只有失败时才切换。两种模式都不会使用被标记的账号。
+            </div>
+          </div>
         </div>
 
         <p class="field-hint" style="margin-top: 6px;">
@@ -316,11 +329,12 @@
                 <th style="min-width: 90px;">上下文</th>
                 <th style="min-width: 90px;">最大输出</th>
                 <th style="min-width: 110px;">能力</th>
+                <th style="min-width: 150px;">调度模式</th>
               </tr>
             </thead>
             <tbody id="models-table-body">
               <tr>
-                <td colspan="5" style="text-align: center; padding: 24px; color: var(--text-dim);">
+                <td colspan="6" style="text-align: center; padding: 24px; color: var(--text-dim);">
                   正在加载模型列表…
                 </td>
               </tr>

@@ -137,9 +137,60 @@ async function loadRuntimeSettings() {
       authToggle.checked = Boolean(data.auto_mark_auth);
       authToggle.disabled = false;
     }
+    renderDispatchMode(data.dispatch_mode || 'poll');
   } catch (err) {
     if (err.message === 'UNAUTHORIZED') return;
     showToast(`获取设置失败: ${err.message}`, 'error');
+  }
+}
+
+function renderDispatchMode(mode) {
+  const group = document.getElementById('dispatch-mode-group');
+  if (!group) return;
+  group.querySelectorAll('.segment-btn').forEach((btn) => {
+    const active = btn.dataset.mode === mode;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+}
+
+async function setDispatchMode(mode) {
+  if (!mode) return;
+  try {
+    const resp = await api('/api/admin/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({ dispatch_mode: mode }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(data.detail || `HTTP ${resp.status}`);
+    }
+    state.runtimeSettings = data;
+    renderDispatchMode(data.dispatch_mode || 'poll');
+    showToast('调度策略已保存', 'success');
+  } catch (err) {
+    if (err.message === 'UNAUTHORIZED') return;
+    showToast(`保存调度策略失败: ${err.message}`, 'error');
+  }
+}
+
+async function setModelDispatch(key, mode) {
+  if (!key || !mode) return;
+  try {
+    const resp = await api(`/api/admin/models/${encodeURIComponent(key)}/dispatch`, {
+      method: 'PATCH',
+      body: JSON.stringify({ mode }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(data.detail || `HTTP ${resp.status}`);
+    }
+    const model = state.models.find((m) => m.key === key);
+    if (model) model.dispatch_mode = data.mode || mode;
+    showToast('模型调度模式已保存', 'success');
+  } catch (err) {
+    if (err.message === 'UNAUTHORIZED') return;
+    showToast(`保存模型调度失败: ${err.message}`, 'error');
   }
 }
 
@@ -480,6 +531,28 @@ function renderQuotaBar(prefix, quotaObj) {
 }
 
 // --- Models Catalog Section ---
+const MODEL_DISPATCH_OPTIONS = [
+  ['inherit', '继承全局'],
+  ['poll', '轮询'],
+  ['poll_include_quota', '轮询（含标记）'],
+  ['failover', '故障转移'],
+];
+
+function renderModelDispatchSelect(model) {
+  const current = model.dispatch_mode || 'inherit';
+  const options = MODEL_DISPATCH_OPTIONS.map(
+    ([value, label]) =>
+      `<option value="${value}"${value === current ? ' selected' : ''}>${label}</option>`
+  ).join('');
+  return `<select class="model-dispatch-select" data-action="model-dispatch" data-key="${model.key}" title="该模型使用的账号调度方式">${options}</select>`;
+}
+
+function onModelsTableChange(e) {
+  const select = e.target.closest('select[data-action="model-dispatch"]');
+  if (!select) return;
+  setModelDispatch(select.dataset.key, select.value);
+}
+
 async function loadModels() {
   const tbody = document.getElementById('models-table-body');
   const countElem = document.getElementById('models-count');
@@ -495,7 +568,7 @@ async function loadModels() {
     tbody.innerHTML = '';
 
     if (models.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding: 24px; color: var(--text-dim);">还没有模型列表。加入账号后再点刷新。</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding: 24px; color: var(--text-dim);">还没有模型列表。加入账号后再点刷新。</td></tr>`;
       return true;
     }
 
@@ -533,6 +606,7 @@ async function loadModels() {
         <td class="tabular-nums">${formatTokenCount(m.max_input_tokens)}</td>
         <td class="tabular-nums">${formatTokenCount(m.max_output_tokens)}</td>
         <td>${badges}</td>
+        <td>${renderModelDispatchSelect(m)}</td>
       `;
       tbody.appendChild(tr);
     });
@@ -1121,6 +1195,22 @@ function setupEventListeners() {
     authToggle.addEventListener('change', (e) => {
       updateRuntimeSetting('auto_mark_auth', e.target.checked, authToggle);
     });
+  }
+
+  // Dispatch strategy segmented control
+  const dispatchGroup = document.getElementById('dispatch-mode-group');
+  if (dispatchGroup) {
+    dispatchGroup.addEventListener('click', (e) => {
+      const btn = e.target.closest('.segment-btn');
+      if (!btn || btn.classList.contains('active')) return;
+      setDispatchMode(btn.dataset.mode);
+    });
+  }
+
+  // Per-model dispatch override
+  const modelsBody = document.getElementById('models-table-body');
+  if (modelsBody) {
+    modelsBody.addEventListener('change', onModelsTableChange);
   }
 
   // Export and Import

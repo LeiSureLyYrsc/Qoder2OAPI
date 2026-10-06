@@ -12,7 +12,7 @@ from qoder2oapi.names import public_id_for_key, public_name_for_key
 from qoder2oapi.oauth import poll_device_flow, start_device_flow
 from qoder2oapi.pool import pool
 from qoder2oapi.refresh import ensure_fresh, exchange_pat, needs_refresh
-from qoder2oapi.runtime_settings import runtime_settings
+from qoder2oapi.runtime_settings import MODEL_DISPATCH_MODES, runtime_settings
 from qoder2oapi.token_store import token_store
 
 router = APIRouter(prefix="/api/admin", dependencies=[Depends(verify_api_key)])
@@ -29,6 +29,11 @@ class PatLoginRequest(BaseModel):
 class UpdateSettingsRequest(BaseModel):
     auto_mark_quota: bool | None = None
     auto_mark_auth: bool | None = None
+    dispatch_mode: str | None = None
+
+
+class UpdateModelDispatchRequest(BaseModel):
+    mode: str
 
 
 class UpdateAccountRequest(BaseModel):
@@ -64,6 +69,7 @@ async def update_runtime_settings(body: UpdateSettingsRequest) -> dict[str, Any]
     updated = runtime_settings.update(
         auto_mark_quota=body.auto_mark_quota,
         auto_mark_auth=body.auto_mark_auth,
+        dispatch_mode=body.dispatch_mode,
     )
     new_quota = runtime_settings.auto_mark_quota
     new_auth = runtime_settings.auto_mark_auth
@@ -194,9 +200,26 @@ async def admin_models() -> dict[str, Any]:
                 "max_output_tokens": catalog_manager.get_max_output_tokens(item),
                 "thinking_levels": thinking,
                 "default_thinking": catalog_manager.get_default_thinking(item),
+                "dispatch_mode": runtime_settings.model_dispatch.get(key, "inherit"),
             }
         )
     return {"models": cards}
+
+
+@router.patch("/models/{key}/dispatch")
+async def update_model_dispatch(key: str, body: UpdateModelDispatchRequest) -> dict[str, Any]:
+    mode = (body.mode or "").strip().lower()
+    if mode not in MODEL_DISPATCH_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"mode 必须是 {', '.join(MODEL_DISPATCH_MODES)} 之一",
+        )
+    runtime_settings.set_model_dispatch(key, mode)
+    return {
+        "status": "ok",
+        "key": key,
+        "mode": runtime_settings.model_dispatch.get(key, "inherit"),
+    }
 
 
 @router.get("/api-key")

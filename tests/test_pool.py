@@ -281,6 +281,98 @@ def test_mark_skip_gates():
     assert saved.last_error == "Auth 403"
 
 
+@pytest.mark.asyncio
+async def test_peek_eligible_quota_scope_excludes_skip_auth():
+    ts_mod.token_store.clear()
+    ts_mod.token_store.save_all(
+        [
+            _acc(id="ok", user_id="u-ok"),
+            _acc(id="quota", user_id="u-quota", skip_quota=True),
+            _acc(id="auth", user_id="u-auth", skip_auth=True),
+        ]
+    )
+
+    assert {a.id for a in pool.peek_eligible()} == {"ok"}
+    assert {a.id for a in pool.peek_eligible(include_quota=True)} == {"ok", "quota"}
+
+
+@pytest.mark.asyncio
+async def test_candidate_accounts_poll_rotates_start():
+    ts_mod.token_store.clear()
+    pool._cursor = 0
+    ts_mod.token_store.save_all(
+        [
+            _acc(id="a", user_id="u-a"),
+            _acc(id="b", user_id="u-b"),
+            _acc(id="c", user_id="u-c"),
+        ]
+    )
+
+    first = [a.id for a in await pool.candidate_accounts("poll")]
+    second = [a.id for a in await pool.candidate_accounts("poll")]
+    assert first == ["a", "b", "c"]
+    assert second == ["b", "c", "a"]
+
+
+@pytest.mark.asyncio
+async def test_candidate_accounts_failover_sticks_to_active():
+    ts_mod.token_store.clear()
+    pool._cursor = 0
+    pool._active_id = None
+    ts_mod.token_store.save_all(
+        [
+            _acc(id="a", user_id="u-a"),
+            _acc(id="b", user_id="u-b"),
+            _acc(id="c", user_id="u-c"),
+        ]
+    )
+
+    assert [a.id for a in await pool.candidate_accounts("failover")] == ["a", "b", "c"]
+
+    # A success on b makes b the sticky active account for subsequent requests.
+    pool.record_success("b", "failover")
+    assert [a.id for a in await pool.candidate_accounts("failover")] == ["b", "c", "a"]
+
+    # A failure on b advances the active pointer to the next eligible account.
+    pool.advance_active("b")
+    assert pool._active_id == "c"
+    assert [a.id for a in await pool.candidate_accounts("failover")] == ["c", "a", "b"]
+
+
+def test_model_dispatch_persistence_and_sanitize(tmp_path):
+    from qoder2oapi.runtime_settings import RuntimeSettings
+
+    data_dir = tmp_path / "dispatch_data"
+    rs = RuntimeSettings(data_dir=data_dir)
+    assert rs.dispatch_mode == "poll"
+    assert rs.model_dispatch == {}
+
+    rs.dispatch_mode = "failover"
+    rs.set_model_dispatch("dfmodel", "poll_include_quota")
+    assert rs.dispatch_mode == "failover"
+    assert rs.model_dispatch == {"dfmodel": "poll_include_quota"}
+
+    rs.set_model_dispatch("dfmodel", "inherit")
+    assert rs.model_dispatch == {}
+
+    rs.set_model_dispatch("auto", "bogus")
+    assert rs.model_dispatch == {}
+
+    rs.set_model_dispatch("dmodel", "poll")
+    reloaded = RuntimeSettings(data_dir=data_dir)
+    assert reloaded.dispatch_mode == "failover"
+    assert reloaded.model_dispatch == {"dmodel": "poll"}
+
+    settings_file = data_dir / "settings.json"
+    settings_file.write_text(
+        '{"dispatch_mode": "nonsense", "model_dispatch": {"x": "bad", "y": "failover"}}',
+        encoding="utf-8",
+    )
+    fallback = RuntimeSettings(data_dir=data_dir)
+    assert fallback.dispatch_mode == "poll"
+    assert fallback.model_dispatch == {"y": "failover"}
+
+
 def test_import_legacy_accounts_defaults_client_to_cli():
     ts_mod.token_store.clear()
     result = ts_mod.token_store.import_accounts(

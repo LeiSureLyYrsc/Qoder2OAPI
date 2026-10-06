@@ -247,6 +247,118 @@ async def test_admin_settings_get_and_patch_and_clear_flags(test_client):
 
 
 @pytest.mark.asyncio
+async def test_admin_dispatch_settings_and_model_override(test_client):
+    catalog_manager.raw_models = [
+        {"key": "auto", "display_name": "Auto"},
+        {"key": "dfmodel", "display_name": "DeepSeek Flash"},
+    ]
+    catalog_manager.models_by_key = {m["key"]: m for m in catalog_manager.raw_models}
+
+    headers = {"Authorization": f"Bearer {settings.qoder2oapi_api_key}"}
+    async with test_client as client:
+        initial = await client.get("/api/admin/settings", headers=headers)
+        assert initial.status_code == 200
+        assert initial.json()["dispatch_mode"] == "poll"
+        assert initial.json()["model_dispatch"] == {}
+
+        patched = await client.patch(
+            "/api/admin/settings", headers=headers, json={"dispatch_mode": "failover"}
+        )
+        assert patched.status_code == 200
+        assert patched.json()["dispatch_mode"] == "failover"
+
+        model_patch = await client.patch(
+            "/api/admin/models/dfmodel/dispatch",
+            headers=headers,
+            json={"mode": "poll_include_quota"},
+        )
+        assert model_patch.status_code == 200
+        assert model_patch.json()["mode"] == "poll_include_quota"
+
+        listed = await client.get("/api/admin/models", headers=headers)
+        assert listed.status_code == 200
+        modes = {m["key"]: m["dispatch_mode"] for m in listed.json()["models"]}
+        assert modes["dfmodel"] == "poll_include_quota"
+        assert modes["auto"] == "inherit"
+
+        reset = await client.patch(
+            "/api/admin/models/dfmodel/dispatch",
+            headers=headers,
+            json={"mode": "inherit"},
+        )
+        assert reset.status_code == 200
+        assert reset.json()["mode"] == "inherit"
+
+        invalid = await client.patch(
+            "/api/admin/models/dfmodel/dispatch",
+            headers=headers,
+            json={"mode": "nonsense"},
+        )
+        assert invalid.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_per_model_poll_include_quota(test_client, monkeypatch):
+    from qoder2oapi import infer
+
+    ts_mod.token_store.clear()
+    ts_mod.token_store.upsert(
+        AccountRecord(
+            id="quota-only",
+            kind="oauth",
+            access_token="tok-q",
+            user_id="user-q",
+            machine_id="m-q",
+            expires_at=9999999999999,
+            skip_quota=True,
+        )
+    )
+    catalog_manager.models_by_key = {"auto": {"key": "auto"}}
+
+    class MockResp:
+        status_code = 200
+
+        async def aiter_lines(self):
+            yield (
+                'data: {"statusCodeValue":200,"body":"{\\"id\\":\\"c1\\",\\"choices\\":'
+                '[{\\"delta\\":{\\"role\\":\\"assistant\\",\\"content\\":\\"hi\\"}}]}"}'
+            )
+            yield "data: [DONE]"
+
+        async def aread(self):
+            return b""
+
+        async def aclose(self):
+            pass
+
+    class MockClient:
+        def build_request(self, *args, **kwargs):
+            return None
+
+        async def send(self, req, stream=False):
+            return MockResp()
+
+    monkeypatch.setattr(infer, "get_http_client", lambda: MockClient())
+
+    headers = {"Authorization": f"Bearer {settings.qoder2oapi_api_key}"}
+    body = {"model": "auto", "messages": [{"role": "user", "content": "hi"}]}
+    async with test_client as client:
+        blocked = await client.post("/v1/chat/completions", headers=headers, json=body)
+        assert blocked.status_code == 429
+
+        patched = await client.patch(
+            "/api/admin/models/auto/dispatch",
+            headers=headers,
+            json={"mode": "poll_include_quota"},
+        )
+        assert patched.status_code == 200
+
+        allowed = await client.post("/v1/chat/completions", headers=headers, json=body)
+        assert allowed.status_code == 200
+        assert allowed.json()["choices"][0]["message"]["content"] == "hi"
+
+
+@pytest.mark.asyncio
 async def test_add_pat_refreshes_model_catalog(test_client, monkeypatch):
     from qoder2oapi.models import AccountRecord
     from qoder2oapi.routes import admin

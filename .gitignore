@@ -1,4 +1,5 @@
 .slim/deepwork/
+.omo/
 .venv/
 __pycache__/
 *.py[cod]
@@ -8,5 +9,5 @@ build/
 data/
 .env
 .python-version
-/tests
-/tests
+.pytest_cache/
+/tests/*.md

@@ -6,15 +6,18 @@ from fastapi import HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 import httpx
 
+from qoder2oapi.catalog import catalog_manager
 from qoder2oapi.constants import CHAT_URL
 from qoder2oapi.cosy import build_cosy_headers
 from qoder2oapi.encoding import qoder_encode_body
 from qoder2oapi.http import get_http_client
 from qoder2oapi.models import ChatCompletionRequest
+from qoder2oapi.names import alias_to_internal_key
 from qoder2oapi.pool import pool
 from qoder2oapi.refresh import ensure_fresh, needs_refresh
+from qoder2oapi.runtime_settings import runtime_settings
 from qoder2oapi.sse import accumulate_sse_response, unwrap_sse_stream
-from qoder2oapi.token_store import token_store
+from qoder2oapi.token_store import token_store  # noqa: F401  (test isolation patches this)
 from qoder2oapi.translator import translate_openai_to_qoder
 
 
@@ -82,6 +85,19 @@ def _chat_headers(encoded_body_bytes: bytes, account, payload: dict[str, Any], m
     return headers
 
 
+def resolve_model_dispatch(model: str) -> tuple[str, bool]:
+    found = catalog_manager.get_model(model)
+    key = str(found.get("key") or "") if isinstance(found, dict) else ""
+    if not key:
+        key = alias_to_internal_key(model)
+    mode = runtime_settings.model_dispatch.get(key) or runtime_settings.dispatch_mode
+    if mode == "failover":
+        return "failover", False
+    if mode == "poll_include_quota":
+        return "poll", True
+    return "poll", False
+
+
 def _error_response(message: str, status_code: int, code: int | None = None) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
@@ -99,22 +115,28 @@ async def execute_infer(
     request: ChatCompletionRequest,
     stream: bool,
 ) -> StreamingResponse | JSONResponse:
-    usable_accounts = pool.peek_usable()
-    if not usable_accounts:
+    strategy, include_quota = resolve_model_dispatch(request.model)
+    candidates = await pool.candidate_accounts(strategy, include_quota)
+    if not candidates:
         raise HTTPException(status_code=401, detail="No usable Qoder account. Please log in or check quotas.")
 
     client = get_http_client()
     last_status_code = 401
     last_error_code: int | None = None
 
-    for _ in range(len(usable_accounts)):
-        account = await pool.next_account()
-        if not account:
-            break
+    def _advance_on_failure(account_id: str) -> None:
+        if strategy == "failover":
+            pool.advance_active(account_id)
+
+    for candidate in candidates:
+        if not pool.eligible(candidate, include_quota):
+            continue
+        account = candidate
 
         if needs_refresh(account):
             account = await ensure_fresh(account)
-            if not pool.usable(account):
+            if not pool.eligible(account, include_quota):
+                _advance_on_failure(account.id)
                 continue
 
         encoded_body_bytes, payload, model_data = _encode_chat_body(request, account)
@@ -134,7 +156,7 @@ async def execute_infer(
             await upstream_resp.aclose()
             if needs_refresh(account):
                 account = await ensure_fresh(account, force=True)
-                if pool.usable(account):
+                if pool.eligible(account, include_quota):
                     encoded_body_bytes, payload, model_data = _encode_chat_body(request, account)
                     headers = _chat_headers(encoded_body_bytes, account, payload, model_data)
                     req2 = client.build_request("POST", CHAT_URL, content=encoded_body_bytes, headers=headers)
@@ -143,18 +165,22 @@ async def execute_infer(
                     if upstream_resp.status_code in (401, 403):
                         await upstream_resp.aclose()
                         pool.mark_skip_auth(account.id, f"HTTP {upstream_resp.status_code}")
+                        _advance_on_failure(account.id)
                         continue
                 else:
                     pool.mark_skip_auth(account.id, "Token refresh failed on 401/403")
+                    _advance_on_failure(account.id)
                     continue
             else:
                 pool.mark_skip_auth(account.id, f"HTTP {upstream_resp.status_code}")
+                _advance_on_failure(account.id)
                 continue
 
         # Handle 429
         if upstream_resp.status_code == 429:
             await upstream_resp.aclose()
             pool.mark_skip_quota(account.id, "HTTP 429 Too Many Requests")
+            _advance_on_failure(account.id)
             continue
 
         if upstream_resp.status_code != 200:
@@ -166,6 +192,7 @@ async def execute_infer(
             )
 
         # If 200
+        pool.record_success(account.id, strategy)
         if stream:
             async def response_stream():
                 try:
@@ -203,6 +230,7 @@ async def execute_infer(
                     )
                 if _is_quota_error(err_body):
                     pool.mark_skip_quota(account.id, f"Accumulate quota error: {err_body}")
+                    _advance_on_failure(account.id)
                     continue
                 return _error_response(
                     str(err_body.get("message") if isinstance(err_body, dict) else err_body),

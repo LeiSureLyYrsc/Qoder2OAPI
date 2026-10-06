@@ -9,13 +9,25 @@ class AccountPool:
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
         self._cursor: int = 0
+        self._active_id: str | None = None
 
     @staticmethod
     def usable(acc: AccountRecord) -> bool:
         return bool(acc.enabled and not acc.skip_quota and not acc.skip_auth and acc.access_token)
 
+    @staticmethod
+    def eligible(acc: AccountRecord, include_quota: bool = False) -> bool:
+        if not (acc.enabled and acc.access_token and not acc.skip_auth):
+            return False
+        if acc.skip_quota and not include_quota:
+            return False
+        return True
+
     def peek_usable(self) -> list[AccountRecord]:
         return [acc for acc in token_store.list_accounts() if self.usable(acc)]
+
+    def peek_eligible(self, include_quota: bool = False) -> list[AccountRecord]:
+        return [acc for acc in token_store.list_accounts() if self.eligible(acc, include_quota)]
 
     async def next_account(self) -> AccountRecord | None:
         async with self._lock:
@@ -28,6 +40,48 @@ class AccountPool:
             idx = self._cursor % n
             self._cursor = (idx + 1) % n
             return usable_accounts[idx]
+
+    async def candidate_accounts(
+        self,
+        strategy: str = "poll",
+        include_quota: bool = False,
+    ) -> list[AccountRecord]:
+        async with self._lock:
+            accounts = token_store.list_accounts()
+            candidates = [acc for acc in accounts if self.eligible(acc, include_quota)]
+            if not candidates:
+                return []
+            if strategy == "failover":
+                return self._order_failover(candidates)
+            return self._order_poll(candidates)
+
+    def _order_poll(self, candidates: list[AccountRecord]) -> list[AccountRecord]:
+        n = len(candidates)
+        idx = self._cursor % n
+        self._cursor = (idx + 1) % n
+        return candidates[idx:] + candidates[:idx]
+
+    def _order_failover(self, candidates: list[AccountRecord]) -> list[AccountRecord]:
+        if not self._active_id:
+            return list(candidates)
+        active_idx = next((i for i, acc in enumerate(candidates) if acc.id == self._active_id), None)
+        if active_idx is None:
+            return list(candidates)
+        return candidates[active_idx:] + candidates[:active_idx]
+
+    def record_success(self, account_id: str, strategy: str = "poll") -> None:
+        if strategy == "failover" and account_id:
+            self._active_id = account_id
+
+    def advance_active(self, account_id: str) -> None:
+        accounts = token_store.list_accounts()
+        candidates = [acc for acc in accounts if self.eligible(acc)]
+        if not candidates:
+            return
+        idx = next((i for i, acc in enumerate(candidates) if acc.id == account_id), None)
+        if idx is None:
+            return
+        self._active_id = candidates[(idx + 1) % len(candidates)].id
 
     def mark_skip_quota(self, account_id: str, error: str = "") -> None:
         acc = token_store.get(account_id)

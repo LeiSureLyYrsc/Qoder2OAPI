@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from qoder2oapi.auth_proxy import verify_api_key
 from qoder2oapi.catalog import catalog_manager
-from qoder2oapi.infer import execute_infer
+from qoder2oapi.infer import execute_infer, resolve_model_dispatch
 from qoder2oapi.models import ChatCompletionRequest, ModelCard, ModelListResponse
 from qoder2oapi.names import public_id_for_key
 from qoder2oapi.pool import pool
@@ -36,12 +36,13 @@ async def list_models() -> ModelListResponse:
 
 @router.post("/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
-    usable_accounts = pool.peek_usable()
+    _, include_quota = resolve_model_dispatch(request.model)
+    usable_accounts = pool.peek_eligible(include_quota)
     if not usable_accounts:
         for account in token_store.list_accounts():
             if needs_refresh(account) and account.enabled and account.skip_auth:
                 await ensure_fresh(account, force=True)
-        usable_accounts = pool.peek_usable()
+        usable_accounts = pool.peek_eligible(include_quota)
     if not usable_accounts:
         # Check if all accounts are only skipped for quota
         all_accounts = token_store.list_accounts()

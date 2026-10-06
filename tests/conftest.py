@@ -23,6 +23,8 @@ def isolated_env(tmp_path, monkeypatch):
     monkeypatch.setattr(refresh_module, "runtime_settings", new_settings)
     from qoder2oapi.routes import admin as admin_routes
     monkeypatch.setattr(admin_routes, "runtime_settings", new_settings)
+    from qoder2oapi import infer as infer_settings_module
+    monkeypatch.setattr(infer_settings_module, "runtime_settings", new_settings)
 
     from qoder2oapi import token_store as ts_module
     new_store = TokenStore(data_dir=test_data_dir)
