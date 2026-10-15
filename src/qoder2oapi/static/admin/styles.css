@@ -464,6 +464,110 @@ body {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 10px;
+  gap: 10px;
+}
+
+.checkin-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.strategy-item-full {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--border-muted);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+
+.checkin-setting-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.checkin-time-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkin-time-label {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.checkin-time-input {
+  width: auto;
+  min-width: 95px;
+  padding: 4px 8px;
+  font-size: 12px;
+  height: 28px;
+}
+
+.checkin-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--bg-card-subtle);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  margin: 4px 0;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.checkin-status-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.checkin-status-label {
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+
+.checkin-status-value {
+  color: var(--text-main);
+  font-weight: 500;
+}
+
+.checkin-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.checkin-badge-success {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #6ee7b7;
+}
+
+.checkin-badge-error {
+  background: rgba(244, 63, 94, 0.12);
+  border: 1px solid rgba(244, 63, 94, 0.3);
+  color: #fda4af;
+}
+
+.checkin-badge-pending {
+  background: rgba(14, 165, 233, 0.1);
+  border: 1px solid rgba(14, 165, 233, 0.25);
+  color: #7dd3fc;
+}
+
+.checkin-badge-idle {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-muted);
+  color: var(--text-dim);
 }
 
 .skip-strategies-title {

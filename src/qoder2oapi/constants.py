@@ -15,6 +15,9 @@ JOB_TOKEN_EXCHANGE = f"{OPENAPI}/api/v1/jobToken/exchange"
 JOB_TOKEN_REFRESH = f"{OPENAPI}/api/v1/jobToken/refresh"
 REFRESH = f"{GATEWAY}/algo/api/v3/user/refresh_token"
 
+CAMPAIGNS_URL = f"{OPENAPI}/sash/api/v1/me/campaigns?clientType=10"
+CAMPAIGN_CLAIM_URL_TEMPLATE = f"{OPENAPI}/sash/api/v1/me/campaigns/{{campaign_id}}/claim"
+
 CLIENT_CLI = "cli"
 
 RSA_PUBLIC_KEY = """-----BEGIN PUBLIC KEY-----

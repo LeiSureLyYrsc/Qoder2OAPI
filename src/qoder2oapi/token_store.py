@@ -26,7 +26,7 @@ EXPORT_FIELDS = (
     "skip_auth",
 )
 
-STORAGE_FIELDS = EXPORT_FIELDS + ("last_error",)
+STORAGE_FIELDS = EXPORT_FIELDS + ("last_error", "checkin")
 
 
 def _field_default(field: str) -> Any:
@@ -34,6 +34,8 @@ def _field_default(field: str) -> Any:
         return 0
     if field == "client":
         return CLIENT_CLI
+    if field == "checkin":
+        return {}
     return ""
 
 
@@ -44,7 +46,14 @@ def account_to_config(account: AccountRecord) -> dict[str, Any]:
 
 def account_to_storage(account: AccountRecord) -> dict[str, Any]:
     data = account.model_dump()
-    return {field: data.get(field, _field_default(field)) for field in STORAGE_FIELDS}
+    res = {}
+    for field in STORAGE_FIELDS:
+        val = data.get(field)
+        if val is None:
+            res[field] = _field_default(field)
+        else:
+            res[field] = val
+    return res
 
 
 def parse_account_payload(raw: Any) -> AccountRecord | None:
@@ -70,6 +79,8 @@ def parse_account_payload(raw: Any) -> AccountRecord | None:
     refresh_token = str(raw.get("refresh_token") or raw.get("refreshToken") or "")
     if refresh_token == "***":
         refresh_token = ""
+    raw_checkin = raw.get("checkin")
+    checkin = raw_checkin if isinstance(raw_checkin, dict) else None
     return AccountRecord(
         id=account_id,
         kind=kind,
@@ -85,6 +96,7 @@ def parse_account_payload(raw: Any) -> AccountRecord | None:
         enabled=bool(raw.get("enabled", True)),
         skip_quota=bool(raw.get("skip_quota") or raw.get("skipQuota", False)),
         skip_auth=bool(raw.get("skip_auth") or raw.get("skipAuth", False)),
+        checkin=checkin,
         last_error=str(raw.get("last_error") or raw.get("lastError") or ""),
     )
 
@@ -94,6 +106,7 @@ class TokenStore:
         self.data_dir = data_dir or data_dir_path
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.accounts_file = self.data_dir / "accounts.json"
+        self._memory_accounts: dict[str, AccountRecord] = {}
 
     def list_accounts(self) -> list[AccountRecord]:
         if not self.accounts_file.exists():
@@ -109,6 +122,8 @@ class TokenStore:
         for item in items:
             parsed = parse_account_payload(item)
             if parsed:
+                if parsed.id in self._memory_accounts:
+                    parsed.quota_snapshot = self._memory_accounts[parsed.id].quota_snapshot
                 accounts.append(parsed)
         return accounts
 
@@ -154,10 +169,12 @@ class TokenStore:
         else:
             accounts.append(account)
 
+        self._memory_accounts[account.id] = account
         self.save_all(accounts)
         return account
 
     def delete(self, account_id: str) -> bool:
+        self._memory_accounts.pop(account_id, None)
         accounts = self.list_accounts()
         new_list = [acc for acc in accounts if acc.id != account_id]
         if len(new_list) == len(accounts):
@@ -250,6 +267,7 @@ class TokenStore:
         }
 
     def clear(self) -> None:
+        self._memory_accounts.clear()
         if self.accounts_file.exists():
             os.remove(self.accounts_file)
 

@@ -13,6 +13,7 @@ async def test_empty_pool_next_account_is_none():
 @pytest.mark.asyncio
 async def test_three_accounts_round_robin_with_skip_quota():
     ts_mod.token_store.clear()
+    pool._cursor = 0
     acc_a = AccountRecord(
         id="acc-a",
         kind="oauth",
@@ -391,3 +392,75 @@ def test_import_legacy_accounts_defaults_client_to_cli():
     assert result["imported"] == 1
     restored = ts_mod.token_store.list_accounts()
     assert restored[0].client == "cli"
+
+
+def test_rate_limited_circuit_breaker():
+    ts_mod.token_store.clear()
+    pool.clear_cooldown()
+
+    acc = _acc(id="cooldown-test", user_id="u-cd")
+    ts_mod.token_store.upsert(acc)
+
+    assert not pool.is_rate_limited("cooldown-test")
+    assert pool.get_cooldown_remaining("cooldown-test") == 0.0
+
+    pool.mark_rate_limited("cooldown-test", duration_seconds=5)
+    assert pool.is_rate_limited("cooldown-test")
+    assert pool.get_cooldown_remaining("cooldown-test") > 0.0
+
+    # Ensure account in TokenStore disk was NOT permanently marked skip_quota
+    saved = ts_mod.token_store.get("cooldown-test")
+    assert saved is not None
+    assert saved.skip_quota is False
+
+    # peek_usable and peek_eligible filter out rate-limited accounts
+    assert pool.peek_usable() == []
+    assert pool.peek_eligible() == []
+
+    pool.clear_cooldown("cooldown-test")
+    assert not pool.is_rate_limited("cooldown-test")
+    assert len(pool.peek_usable()) == 1
+
+
+@pytest.mark.asyncio
+async def test_candidate_accounts_rate_limit_filtering_and_fallback():
+    ts_mod.token_store.clear()
+    pool.clear_cooldown()
+    pool._cursor = 0
+    pool._active_id = None
+
+    acc_a = _acc(id="acc-a", user_id="u-a")
+    acc_b = _acc(id="acc-b", user_id="u-b")
+    ts_mod.token_store.save_all([acc_a, acc_b])
+
+    # Mark acc-a as rate-limited
+    pool.mark_rate_limited("acc-a", duration_seconds=30)
+    candidates = await pool.candidate_accounts("poll")
+    assert [a.id for a in candidates] == ["acc-b"]
+
+    # Mark acc-b as rate-limited too with shorter cooldown
+    pool.mark_rate_limited("acc-b", duration_seconds=10)
+    # When all eligible are rate limited, fallback orders by soonest expiring cooldown
+    fallback = await pool.candidate_accounts("poll")
+    assert [a.id for a in fallback] == ["acc-b", "acc-a"]
+
+    pool.clear_cooldown()
+
+
+def test_is_zero_cost_model():
+    from qoder2oapi.pool import is_zero_cost_model
+    from qoder2oapi.runtime_settings import runtime_settings
+
+    # Free model key patterns
+    assert is_zero_cost_model("dfmodel") is True
+    assert is_zero_cost_model("qfmodel") is True
+    assert is_zero_cost_model("deepseek-v4-flash") is True
+    assert is_zero_cost_model("gpt-4o-mini-lite") is True
+
+    # Non-free model by default
+    assert is_zero_cost_model("gpt-4o") is False
+
+    # Model dispatch configured to poll_include_quota
+    runtime_settings.set_model_dispatch("custom-free", "poll_include_quota")
+    assert is_zero_cost_model("custom-free") is True
+    runtime_settings.set_model_dispatch("custom-free", "inherit")

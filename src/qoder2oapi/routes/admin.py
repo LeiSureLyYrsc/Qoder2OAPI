@@ -6,13 +6,14 @@ from pydantic import BaseModel, Field
 
 from qoder2oapi.auth_proxy import verify_api_key
 from qoder2oapi.catalog import catalog_manager
+from qoder2oapi.checkin import checkin_account, checkin_scheduler
 from qoder2oapi.config import api_key_file, settings
 from qoder2oapi.identity import normalize_client
 from qoder2oapi.names import public_id_for_key, public_name_for_key
 from qoder2oapi.oauth import poll_device_flow, start_device_flow
 from qoder2oapi.pool import pool
 from qoder2oapi.refresh import ensure_fresh, exchange_pat, needs_refresh
-from qoder2oapi.runtime_settings import MODEL_DISPATCH_MODES, runtime_settings
+from qoder2oapi.runtime_settings import MODEL_DISPATCH_MODES, runtime_settings, validate_checkin_time
 from qoder2oapi.token_store import token_store
 
 router = APIRouter(prefix="/api/admin", dependencies=[Depends(verify_api_key)])
@@ -30,6 +31,8 @@ class UpdateSettingsRequest(BaseModel):
     auto_mark_quota: bool | None = None
     auto_mark_auth: bool | None = None
     dispatch_mode: str | None = None
+    auto_checkin: bool | None = None
+    checkin_time: str | None = None
 
 
 class UpdateModelDispatchRequest(BaseModel):
@@ -64,17 +67,44 @@ async def get_runtime_settings() -> dict[str, Any]:
 
 @router.patch("/settings")
 async def update_runtime_settings(body: UpdateSettingsRequest) -> dict[str, Any]:
+    if body.checkin_time is not None and not validate_checkin_time(body.checkin_time):
+        raise HTTPException(status_code=400, detail="Invalid checkin_time format, expected HH:MM")
+
     prev_quota = runtime_settings.auto_mark_quota
     prev_auth = runtime_settings.auto_mark_auth
     updated = runtime_settings.update(
         auto_mark_quota=body.auto_mark_quota,
         auto_mark_auth=body.auto_mark_auth,
         dispatch_mode=body.dispatch_mode,
+        auto_checkin=body.auto_checkin,
+        checkin_time=body.checkin_time,
     )
     new_quota = runtime_settings.auto_mark_quota
     new_auth = runtime_settings.auto_mark_auth
     pool.on_settings_changed(prev_quota, new_quota, prev_auth, new_auth)
     return updated
+
+
+@router.get("/checkin")
+@router.get("/checkin/status")
+async def admin_get_checkin() -> dict[str, Any]:
+    return checkin_scheduler.get_status_overview()
+
+
+@router.post("/checkin")
+@router.post("/checkin/run")
+async def admin_post_checkin() -> dict[str, Any]:
+    return await checkin_scheduler.run_checkin_all(trigger_source="manual")
+
+
+@router.post("/accounts/{account_id}/checkin")
+async def admin_checkin_single_account(account_id: str) -> dict[str, Any]:
+    acc = token_store.get(account_id)
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    res = await checkin_account(acc)
+    is_success = res.get("status") in ("success", "already")
+    return {"status": "ok", "success": is_success, "result": res}
 
 
 @router.get("/status")

@@ -81,6 +81,7 @@ class AccountRecord(BaseModel):
     skip_quota: bool = False
     skip_auth: bool = False
     quota_snapshot: dict[str, Any] = Field(default_factory=dict)
+    checkin: dict[str, Any] | None = None
     last_error: str = ""
 
     def public_dump(self) -> dict[str, Any]:

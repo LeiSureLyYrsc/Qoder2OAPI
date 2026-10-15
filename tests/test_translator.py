@@ -157,6 +157,38 @@ def test_keyed_context_config_uses_largest_window():
     assert catalog_manager.get_default_thinking(model) == "medium"
 
 
+def test_dfmodel_enabled_efforts_and_default_max():
+    df_data = {
+        "key": "dfmodel",
+        "display_name": "DeepSeek Flash",
+        "is_reasoning": False,
+        "max_output_tokens": 32768,
+        "thinking_config": {
+            "disabled": {"description": "Disable thinking"},
+            "enabled": {
+                "efforts": {
+                    "high": {"description": "High thinking intensity"},
+                    "max": {"description": "Maximum thinking intensity", "is_default": True},
+                    "low": {},
+                },
+                "is_default": True,
+            },
+        },
+    }
+    assert catalog_manager.determine_thinking_levels(df_data) == ["low", "high", "max"]
+    assert catalog_manager.get_default_thinking(df_data) == "max"
+
+    catalog_manager.models_by_key["dfmodel"] = df_data
+    req = ChatCompletionRequest(
+        model="deepseek-v4-flash",
+        messages=[ChatMessage(role="user", content="hello")],
+    )
+    payload, _ = translate_openai_to_qoder(req, user_id="user_123")
+    assert payload["parameters"]["reasoning_effort"] == "max"
+    assert payload["chat_context"]["extra"]["ideModelConfigOverride"]["reasoning_effort"] == "max"
+    assert payload["model_config"]["reasoning_effort"] == "max"
+
+
 def test_scene_map_catalog_and_missing_max_input():
     data = {
         "default": [

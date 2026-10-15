@@ -137,10 +137,9 @@ async def test_sse_error_code_passed_through(monkeypatch):
     from qoder2oapi import infer
     monkeypatch.setattr(infer, "get_http_client", lambda: MockClient())
 
-    result = await execute_infer(_make_request(stream=False), stream=False)
-    assert result.status_code == 112
-    payload = json.loads(result.body)
-    assert payload["error"]["code"] == 112
+    with pytest.raises(HTTPException) as exc_info:
+        await execute_infer(_make_request(stream=False), stream=False)
+    assert exc_info.value.status_code == 112
 
 
 _SUCCESS_SSE = [
@@ -256,6 +255,142 @@ async def test_failover_sticks_to_active_and_advances_on_failure(monkeypatch):
     third = await execute_infer(_make_request("auto"), stream=False)
     assert third.status_code == 200
     assert mock.seen == ["user-b"]
+
+    # Reset pool active pointer so subsequent tests have clean state
+    pool._active_id = None
+    pool.clear_cooldown()
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_quota_and_429_failover_to_next_candidate(monkeypatch):
+    ts_mod.token_store.clear()
+    pool._cursor = 0
+    pool._active_id = None
+    pool.clear_cooldown()
+
+    ts_mod.token_store.save_all(
+        [
+            AccountRecord(
+                id="acc-q-err",
+                kind="oauth",
+                access_token="tok-1",
+                user_id="user-1",
+                machine_id="m-1",
+                expires_at=9999999999999,
+            ),
+            AccountRecord(
+                id="acc-success",
+                kind="oauth",
+                access_token="tok-2",
+                user_id="user-2",
+                machine_id="m-2",
+                expires_at=9999999999999,
+            ),
+        ]
+    )
+    catalog_manager.models_by_key = {"auto": {"key": "auto"}}
+    _runtime().dispatch_mode = "poll"
+
+    from qoder2oapi import infer
+
+    calls = []
+
+    class MockFailoverClient:
+        def build_request(self, method, url=None, content=None, headers=None):
+            return {"user": (headers or {}).get("Cosy-User", "")}
+
+        async def send(self, req, stream=False):
+            user = req.get("user", "")
+            calls.append(user)
+            if user == "user-1":
+                # Returns 200 with SSE error body code 112
+                err_body = json.dumps({"code": 112, "message": "quota exceeded"})
+                lines = [f'data: {{"statusCodeValue":200,"body":{json.dumps(err_body)}}}']
+                return _MockHttpxResponse(200, stream_lines=lines)
+            else:
+                return _MockHttpxResponse(200, stream_lines=list(_SUCCESS_SSE))
+
+    monkeypatch.setattr(infer, "get_http_client", lambda: MockFailoverClient())
+
+    result = await execute_infer(_make_request("auto", stream=False), stream=False)
+    assert result.status_code == 200
+    assert calls == ["user-1", "user-2"]
+    payload = json.loads(result.body)
+    assert payload["choices"][0]["message"]["content"] == "hi"
+
+    # Verify acc-q-err was marked skip_quota or error
+    rec1 = ts_mod.token_store.get("acc-q-err")
+    assert rec1 is not None
+    assert "Accumulate quota error" in rec1.last_error
+
+    pool.clear_cooldown()
+
+
+@pytest.mark.asyncio
+async def test_streaming_peek_failover(monkeypatch):
+    ts_mod.token_store.clear()
+    pool._cursor = 0
+    pool._active_id = None
+    pool.clear_cooldown()
+
+    ts_mod.token_store.save_all(
+        [
+            AccountRecord(
+                id="acc-stream-429",
+                kind="oauth",
+                access_token="tok-s1",
+                user_id="user-s1",
+                machine_id="m-s1",
+                expires_at=9999999999999,
+            ),
+            AccountRecord(
+                id="acc-stream-ok",
+                kind="oauth",
+                access_token="tok-s2",
+                user_id="user-s2",
+                machine_id="m-s2",
+                expires_at=9999999999999,
+            ),
+        ]
+    )
+    catalog_manager.models_by_key = {"auto": {"key": "auto"}}
+    _runtime().dispatch_mode = "poll"
+
+    from qoder2oapi import infer
+
+    calls = []
+
+    class MockStreamClient:
+        def build_request(self, method, url=None, content=None, headers=None):
+            return {"user": (headers or {}).get("Cosy-User", "")}
+
+        async def send(self, req, stream=False):
+            user = req.get("user", "")
+            calls.append(user)
+            if user == "user-s1":
+                # First event is an SSE error frame (e.g. 429)
+                err_body = json.dumps({"code": 429, "message": "Too Many Requests"})
+                lines = [f'data: {{"statusCodeValue":200,"body":{json.dumps(err_body)}}}']
+                return _MockHttpxResponse(200, stream_lines=lines)
+            else:
+                return _MockHttpxResponse(200, stream_lines=list(_SUCCESS_SSE))
+
+    monkeypatch.setattr(infer, "get_http_client", lambda: MockStreamClient())
+
+    streaming_resp = await execute_infer(_make_request("auto", stream=True), stream=True)
+    assert calls == ["user-s1", "user-s2"]
+    assert pool.is_rate_limited("acc-stream-429")
+
+    # Read chunks from the streaming response
+    chunks = []
+    async for chunk in streaming_resp.body_iterator:
+        chunks.append(chunk)
+
+    full_text = "".join(chunks)
+    assert "data: " in full_text
+    assert "[DONE]" in full_text
+
+    pool.clear_cooldown()
 
 
 @pytest.mark.asyncio

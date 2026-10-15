@@ -25,6 +25,8 @@ def isolated_env(tmp_path, monkeypatch):
     monkeypatch.setattr(admin_routes, "runtime_settings", new_settings)
     from qoder2oapi import infer as infer_settings_module
     monkeypatch.setattr(infer_settings_module, "runtime_settings", new_settings)
+    from qoder2oapi import checkin as checkin_module
+    monkeypatch.setattr(checkin_module, "runtime_settings", new_settings)
 
     from qoder2oapi import token_store as ts_module
     new_store = TokenStore(data_dir=test_data_dir)
@@ -42,6 +44,7 @@ def isolated_env(tmp_path, monkeypatch):
     monkeypatch.setattr(infer_module, "token_store", new_store)
     monkeypatch.setattr(pool_module, "token_store", new_store)
     monkeypatch.setattr(refresh_module, "token_store", new_store)
+    monkeypatch.setattr(checkin_module, "token_store", new_store)
     from qoder2oapi import app as app_module
     monkeypatch.setattr(app_module, "token_store", new_store)
     yield

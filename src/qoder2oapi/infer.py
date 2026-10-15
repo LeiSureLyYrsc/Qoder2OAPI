@@ -13,7 +13,7 @@ from qoder2oapi.encoding import qoder_encode_body
 from qoder2oapi.http import get_http_client
 from qoder2oapi.models import ChatCompletionRequest
 from qoder2oapi.names import alias_to_internal_key
-from qoder2oapi.pool import pool
+from qoder2oapi.pool import is_zero_cost_model, pool
 from qoder2oapi.refresh import ensure_fresh, needs_refresh
 from qoder2oapi.runtime_settings import runtime_settings
 from qoder2oapi.sse import accumulate_sse_response, unwrap_sse_stream
@@ -24,6 +24,69 @@ from qoder2oapi.translator import translate_openai_to_qoder
 async def _line_generator(response: httpx.Response) -> AsyncIterator[str]:
     async for line in response.aiter_lines():
         yield line
+
+
+async def _peek_first_sse_item(
+    stream_iter: AsyncIterator[str],
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Peek the first non-empty SSE event line(s) and determine if upstream returned an error.
+
+    Returns:
+        (error_info, buffered_chunks)
+        where error_info is a dict containing error details if an upstream error was detected,
+        or None if normal stream content,
+        and buffered_chunks is the list of unparsed/parsed chunks already read that must be yielded.
+    """
+    buffered: list[str] = []
+    async for chunk in stream_iter:
+        buffered.append(chunk)
+        line = chunk.strip()
+        if not line:
+            continue
+        if not line.startswith("data:"):
+            # Not an SSE data frame; keep peeking
+            continue
+
+        raw_data = line[len("data:") :].strip()
+        if not raw_data or raw_data == "[DONE]":
+            # Normal stream or immediate DONE
+            return None, buffered
+
+        try:
+            envelope = json.loads(raw_data)
+        except Exception:
+            # Not JSON; let stream pass through
+            return None, buffered
+
+        # 1. Direct error field in chunk
+        if isinstance(envelope, dict) and "error" in envelope:
+            err_obj = envelope["error"]
+            return {"error": err_obj, "raw": raw_data}, buffered
+
+        # 2. Envelope status code (e.g. statusCodeValue != 200)
+        status_code = envelope.get("statusCodeValue", 200) if isinstance(envelope, dict) else 200
+        if status_code != 200:
+            err_body = envelope.get("body") or envelope.get("message") or "Upstream error"
+            return {"statusCodeValue": status_code, "body": err_body, "raw": raw_data}, buffered
+
+        # 3. HTTP 200 / statusCodeValue 200 but body contains error JSON (e.g. {"code": 112...})
+        inner = envelope.get("body") if isinstance(envelope, dict) else None
+        if isinstance(inner, str):
+            try:
+                parsed_inner = json.loads(inner)
+            except Exception:
+                parsed_inner = None
+        else:
+            parsed_inner = inner if isinstance(inner, dict) else None
+
+        if isinstance(parsed_inner, dict) and "choices" not in parsed_inner:
+            if "code" in parsed_inner or "error" in parsed_inner or _is_quota_error(parsed_inner):
+                return {"error": parsed_inner, "body": inner, "raw": raw_data}, buffered
+
+        # Normal first frame with choices/content
+        return None, buffered
+
+    return None, buffered
 
 
 def _is_quota_error(err_content: Any) -> bool:
@@ -91,11 +154,10 @@ def resolve_model_dispatch(model: str) -> tuple[str, bool]:
     if not key:
         key = alias_to_internal_key(model)
     mode = runtime_settings.model_dispatch.get(key) or runtime_settings.dispatch_mode
+    include_quota = (mode == "poll_include_quota") or is_zero_cost_model(model) or is_zero_cost_model(key)
     if mode == "failover":
-        return "failover", False
-    if mode == "poll_include_quota":
-        return "poll", True
-    return "poll", False
+        return "failover", include_quota
+    return "poll", include_quota
 
 
 def _error_response(message: str, status_code: int, code: int | None = None) -> JSONResponse:
@@ -179,7 +241,7 @@ async def execute_infer(
         # Handle 429
         if upstream_resp.status_code == 429:
             await upstream_resp.aclose()
-            pool.mark_skip_quota(account.id, "HTTP 429 Too Many Requests")
+            pool.mark_rate_limited(account.id, duration_seconds=30)
             _advance_on_failure(account.id)
             continue
 
@@ -192,11 +254,50 @@ async def execute_infer(
             )
 
         # If 200
-        pool.record_success(account.id, strategy)
         if stream:
+            # Peek first SSE item to verify upstream didn't send an SSE error frame
+            raw_stream = _line_generator(upstream_resp)
+            error_info, buffered = await _peek_first_sse_item(raw_stream)
+
+            if error_info is not None:
+                await upstream_resp.aclose()
+                err_content = error_info.get("error") or error_info.get("body") or error_info
+                code = _extract_error_code(err_content) or error_info.get("statusCodeValue")
+                if code is not None:
+                    last_error_code = code
+                    last_status_code = code
+
+                if code == 429:
+                    pool.mark_rate_limited(account.id, duration_seconds=30)
+                    _advance_on_failure(account.id)
+                    continue
+                elif code in (401, 403):
+                    pool.mark_skip_auth(account.id, f"SSE error code: {code}")
+                    _advance_on_failure(account.id)
+                    continue
+                elif code == 112 or _is_quota_error(err_content):
+                    pool.mark_skip_quota(account.id, f"SSE quota error: {err_content}")
+                    _advance_on_failure(account.id)
+                    continue
+                else:
+                    return _error_response(
+                        str(err_content.get("message") if isinstance(err_content, dict) else err_content),
+                        code or 500,
+                        code=code,
+                    )
+
+            # Peek succeeded: upstream sent normal content
+            pool.record_success(account.id, strategy)
+
+            async def combined_lines():
+                for b_chunk in buffered:
+                    yield b_chunk
+                async for chunk in raw_stream:
+                    yield chunk
+
             async def response_stream():
                 try:
-                    async for chunk in unwrap_sse_stream(_line_generator(upstream_resp)):
+                    async for chunk in unwrap_sse_stream(combined_lines()):
                         yield chunk
                 finally:
                     await upstream_resp.aclose()
@@ -220,23 +321,35 @@ async def execute_infer(
                 err_body = result.get("error")
                 code = _extract_error_code(err_body)
                 if code is not None:
-                    # Proxy upstream error code as HTTP status; still mark quota-ish codes as skip.
-                    if _is_quota_error(err_body):
-                        pool.mark_skip_quota(account.id, f"Accumulate quota error: {err_body}")
+                    last_error_code = code
+                    last_status_code = code
+
+                if code == 429:
+                    pool.mark_rate_limited(account.id, duration_seconds=30)
+                    _advance_on_failure(account.id)
+                    continue
+                elif code in (401, 403):
+                    pool.mark_skip_auth(account.id, f"Accumulate error {code}")
+                    _advance_on_failure(account.id)
+                    continue
+                elif code == 112 or _is_quota_error(err_body):
+                    pool.mark_skip_quota(account.id, f"Accumulate quota error: {err_body}")
+                    _advance_on_failure(account.id)
+                    continue
+
+                if code is not None:
                     return _error_response(
                         str(err_body.get("message") if isinstance(err_body, dict) else err_body),
                         code,
                         code=code,
                     )
-                if _is_quota_error(err_body):
-                    pool.mark_skip_quota(account.id, f"Accumulate quota error: {err_body}")
-                    _advance_on_failure(account.id)
-                    continue
                 return _error_response(
                     str(err_body.get("message") if isinstance(err_body, dict) else err_body),
                     500,
                     code=None,
                 )
+
+            pool.record_success(account.id, strategy)
             return JSONResponse(content=result)
 
     # If all usable accounts exhausted, return the last upstream HTTP status code.

@@ -122,6 +122,25 @@ class CatalogManager:
             model_data.get("thinking_config") or model_data.get("thinkingConfig") or {},
             model_data.get("model_config") or model_data.get("modelConfig") or {},
         ]
+        # Check enabled.efforts first inside thinking_config
+        for tc_source in (
+            model_data.get("thinking_config"),
+            model_data.get("thinkingConfig"),
+            (model_data.get("model_config") or {}).get("thinking_config")
+            if isinstance(model_data.get("model_config"), dict)
+            else None,
+        ):
+            if isinstance(tc_source, dict):
+                enabled = tc_source.get("enabled")
+                if isinstance(enabled, dict) and "efforts" in enabled:
+                    levels = _normalize_thinking_levels(enabled.get("efforts"))
+                    if levels:
+                        return levels
+                if "efforts" in tc_source:
+                    levels = _normalize_thinking_levels(tc_source.get("efforts"))
+                    if levels:
+                        return levels
+
         for source in sources:
             if not isinstance(source, dict):
                 continue
@@ -147,6 +166,34 @@ class CatalogManager:
         levels = self.determine_thinking_levels(model_data)
         if not levels:
             return None
+
+        # Check for is_default inside thinking_config.get("enabled", {}).get("efforts") or thinking_config.get("efforts")
+        for tc_source in (
+            model_data.get("thinking_config"),
+            model_data.get("thinkingConfig"),
+            (model_data.get("model_config") or {}).get("thinking_config")
+            if isinstance(model_data.get("model_config"), dict)
+            else None,
+        ):
+            if isinstance(tc_source, dict):
+                efforts_dict = None
+                enabled = tc_source.get("enabled")
+                if isinstance(enabled, dict) and isinstance(enabled.get("efforts"), dict):
+                    efforts_dict = enabled.get("efforts")
+                elif isinstance(tc_source.get("efforts"), dict):
+                    efforts_dict = tc_source.get("efforts")
+
+                if efforts_dict:
+                    for effort_name, effort_info in efforts_dict.items():
+                        if isinstance(effort_info, dict) and (
+                            effort_info.get("is_default")
+                            or effort_info.get("isDefault")
+                            or effort_info.get("default")
+                        ):
+                            effort_str = str(effort_name).lower()
+                            if effort_str in levels:
+                                return effort_str
+
         for source in (
             model_data,
             model_data.get("thinking_config") or {},
