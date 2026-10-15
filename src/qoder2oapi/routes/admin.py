@@ -9,6 +9,7 @@ from qoder2oapi.catalog import catalog_manager
 from qoder2oapi.checkin import checkin_account, checkin_scheduler
 from qoder2oapi.config import api_key_file, settings
 from qoder2oapi.identity import normalize_client
+from qoder2oapi.metrics import metrics_manager
 from qoder2oapi.names import public_id_for_key, public_name_for_key
 from qoder2oapi.oauth import poll_device_flow, start_device_flow
 from qoder2oapi.pool import pool
@@ -263,3 +264,23 @@ async def rotate_api_key() -> RotateKeyResponse:
     settings.qoder2oapi_api_key = new_key
     api_key_file.write_text(new_key, encoding="utf-8")
     return RotateKeyResponse(api_key=new_key)
+
+
+@router.get("/metrics/overview")
+async def get_metrics_overview() -> dict[str, Any]:
+    return metrics_manager.get_metrics_overview()
+
+
+@router.get("/metrics/models")
+async def get_metrics_models() -> list[dict[str, Any]]:
+    return metrics_manager.get_metrics_by_model()
+
+
+@router.get("/metrics/trends")
+async def get_metrics_trends(hours: int = 24) -> list[dict[str, Any]]:
+    return metrics_manager.get_hourly_trends(hours=hours)
+
+
+@router.get("/metrics/pricing")
+async def get_metrics_pricing() -> list[dict[str, Any]]:
+    return metrics_manager.get_model_pricing_list()

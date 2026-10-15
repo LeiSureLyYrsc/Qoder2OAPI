@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Qoder2OAPI 请求统计</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+  <!-- Lock Screen View (Enter Key) -->
+  <div id="lock-screen" class="lock-screen hidden">
+    <div class="lock-card">
+      <div class="lock-brand">
+        <div class="brand-icon">Q</div>
+        <div class="brand-text">
+          <h1>Qoder2OAPI 控制台</h1>
+          <div class="brand-sub">请求统计与费用分析</div>
+        </div>
+      </div>
+
+      <div>
+        <p style="margin-bottom: 12px; font-size: 13px; color: var(--text-muted);">
+          打开统计页面需要本代理的密钥。请把启动时打印的内容或 <code>data/api_key.txt</code> 里的字符串贴到下面。
+        </p>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <input 
+            type="password" 
+            id="lock-key-input" 
+            class="input-control" 
+            placeholder="粘贴本代理密钥"
+            autocomplete="off"
+            spellcheck="false"
+          >
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end;">
+        <button id="lock-save-btn" class="btn btn-primary" style="width: 100%;">进入统计页面</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Dashboard View -->
+  <div id="main-dashboard" class="app-container hidden">
+    <!-- Topbar Header -->
+    <header class="topbar">
+      <div class="brand-section">
+        <div class="brand-icon">Q</div>
+        <div class="brand-text">
+          <h1>
+            Qoder2OAPI
+            <span class="brand-version">v0.1.0</span>
+          </h1>
+          <div class="brand-sub">请求统计与官方 API 价格折算分析</div>
+        </div>
+      </div>
+
+      <nav class="topbar-nav">
+        <a href="/" class="nav-link">控制台</a>
+        <a href="/stats" class="nav-link active">请求统计</a>
+      </nav>
+
+      <div class="topbar-actions">
+        <button id="refresh-stats-btn" class="btn btn-primary" title="刷新统计数据">刷新数据</button>
+      </div>
+    </header>
+
+    <!-- Section 1: KPI Summary Cards -->
+    <div class="metrics-grid">
+      <!-- Card 1: Total Requests -->
+      <div class="kpi-card">
+        <div class="kpi-title">总请求数</div>
+        <div id="stat-total-requests" class="kpi-value tabular-nums">0</div>
+        <div class="kpi-sub">
+          <span>累计成功完成的调用</span>
+        </div>
+      </div>
+
+      <!-- Card 2: Average TTFT -->
+      <div class="kpi-card kpi-teal">
+        <div class="kpi-title">平均首字延迟 (TTFT)</div>
+        <div id="stat-avg-ttft" class="kpi-value tabular-nums">0 <span style="font-size: 14px; font-weight: normal; color: var(--text-muted);">ms</span></div>
+        <div class="kpi-sub">
+          <span>从请求发出到流式首 Token 到达</span>
+        </div>
+      </div>
+
+      <!-- Card 3: TPS -->
+      <div class="kpi-card kpi-emerald">
+        <div class="kpi-title">生成吞吐 (TPS)</div>
+        <div id="stat-avg-tps" class="kpi-value tabular-nums">0 <span style="font-size: 14px; font-weight: normal; color: var(--text-muted);">tok/s</span></div>
+        <div class="kpi-sub">
+          <span>平均每秒生成输出 Token 数</span>
+        </div>
+      </div>
+
+      <!-- Card 4: Cache Hit Rate -->
+      <div class="kpi-card kpi-amber">
+        <div class="kpi-title">缓存命中率</div>
+        <div id="stat-cache-hit-rate" class="kpi-value tabular-nums">0.0%</div>
+        <div class="kpi-sub">
+          <span id="stat-cached-tokens-sub">0 缓存 / 0 输入</span>
+        </div>
+      </div>
+
+      <!-- Card 5: Tokens Overview -->
+      <div class="kpi-card">
+        <div class="kpi-title">输入 / 输出 Tokens</div>
+        <div id="stat-tokens-summary" class="kpi-value tabular-nums" style="font-size: 18px; line-height: 1.4;">0 / 0</div>
+        <div class="kpi-sub">
+          <span id="stat-total-tokens-sub">总计消耗 0 Tokens</span>
+        </div>
+      </div>
+
+      <!-- Card 6: Credits Deducted -->
+      <div class="kpi-card kpi-rose">
+        <div class="kpi-title">累计扣费 (Credits)</div>
+        <div id="stat-total-credits" class="kpi-value tabular-nums">0</div>
+        <div class="kpi-sub">
+          <span id="stat-credits-rmb-sub">折合 ¥0.00 元 (基准 1 Credit = ¥0.04)</span>
+        </div>
+      </div>
+
+      <!-- Card 7: Official API Cost -->
+      <div class="kpi-card kpi-amber">
+        <div class="kpi-title">官方 API 应付 (高峰价)</div>
+        <div id="stat-official-cost" class="kpi-value tabular-nums" style="color: var(--accent-amber);">¥0.00</div>
+        <div class="kpi-sub">
+          <span>按各大模型官方公开 API 高峰期标准价折算</span>
+        </div>
+      </div>
+
+      <!-- Card 8: Total Saved -->
+      <div class="kpi-card kpi-emerald">
+        <div class="kpi-title">累计价值折算</div>
+        <div id="stat-total-saved" class="kpi-value tabular-nums" style="color: var(--accent-emerald);">¥0.00</div>
+        <div class="kpi-sub">
+          <span>对比官方直接购买 API 的综合等价价值</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 2: Model Pricing Reference (Static Snapshot) -->
+    <section class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          官方 API 价格换算标准（高峰基准价）
+        </div>
+        <div id="pricing-fetch-badge" class="fetch-badge">
+          抓取时间：2026-10-15 20:00:00 (UTC+8)
+        </div>
+      </div>
+
+      <div class="panel-body" style="padding: 0;">
+        <div style="overflow-x: auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>模型名称</th>
+                <th>内部 KEY</th>
+                <th>缓存命中价 (¥/1M)</th>
+                <th>未命中输入价 (¥/1M)</th>
+                <th>生成输出价 (¥/1M)</th>
+                <th>抓取基准时段</th>
+                <th>Qoder 参考倍率</th>
+              </tr>
+            </thead>
+            <tbody id="pricing-table-body">
+              <tr>
+                <td colspan="7" style="text-align: center; color: var(--text-dim); padding: 20px;">
+                  加载价格数据中…
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 3: Time Trends (Hourly) -->
+    <section class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          时间趋势（近 24 小时）
+        </div>
+        <div class="status-badge">
+          <span class="dot dot-blue"></span> 小时级聚合
+        </div>
+      </div>
+
+      <div class="panel-body" style="padding: 0;">
+        <div style="overflow-x: auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>时间段</th>
+                <th>请求次数</th>
+                <th>平均首字 (TTFT)</th>
+                <th>生成吞吐 (TPS)</th>
+                <th>总消耗 Tokens</th>
+                <th>官方折合金额 (¥)</th>
+              </tr>
+            </thead>
+            <tbody id="trends-table-body">
+              <tr>
+                <td colspan="6" style="text-align: center; color: var(--text-dim); padding: 20px;">
+                  暂无历史趋势数据，发送请求后将在此自动统计。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 4: Breakdown by Model -->
+    <section class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+          按模型明细栏目
+        </div>
+        <div class="status-badge">
+          <span class="dot dot-green"></span> 实时明细
+        </div>
+      </div>
+
+      <div class="panel-body" style="padding: 0;">
+        <div style="overflow-x: auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>模型 (Model)</th>
+                <th>请求次数</th>
+                <th>平均首字</th>
+                <th>生成吞吐</th>
+                <th>输入 Tokens</th>
+                <th>缓存 Tokens</th>
+                <th>输出 Tokens</th>
+                <th>缓存命中率</th>
+                <th>累计扣费 (Credits)</th>
+                <th>官方 API 应付 (¥)</th>
+              </tr>
+            </thead>
+            <tbody id="model-metrics-table-body">
+              <tr>
+                <td colspan="10" style="text-align: center; color: var(--text-dim); padding: 20px;">
+                  暂无模型请求记录。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer-note">
+      Qoder2OAPI · 请求统计与官方成本对照面板 · 数据持久化保存在 data/metrics.db
+    </footer>
+  </div>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="/static/stats.js"></script>
+</body>
+</html>

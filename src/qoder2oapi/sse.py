@@ -3,6 +3,8 @@ import json
 import time
 from typing import Any
 
+from qoder2oapi.errors import get_error_detail
+
 
 def _upstream_code_from_text(err_msg: str) -> int | None:
     try:
@@ -20,12 +22,13 @@ def _upstream_code_from_text(err_msg: str) -> int | None:
 
 def _error_frames(err_msg: str) -> list[str]:
     code = _upstream_code_from_text(err_msg) or 500
+    err_detail = get_error_detail(code, raw_message=err_msg)
     err_obj = {
         "error": {
-            "message": err_msg,
-            "type": "qoder_error",
+            "message": err_detail["formatted_message"],
+            "type": err_detail["type"],
             "param": None,
-            "code": code,
+            "code": err_detail["code"],
         }
     }
     return [f"data: {json.dumps(err_obj)}\n\n", "data: [DONE]\n\n"]

@@ -54,8 +54,9 @@ curl http://127.0.0.1:8000/v1/chat/completions \
 - `GET /v1/dashboard/billing/usage`（credits，不是美元；保持兼容）
 - `GET /v1/dashboard/billing/subscription`（保持兼容）
 - `GET /v1/dashboard/billing/credits`（返回号池 `general` / `addon` / `dedicated` 与每个账号的剩余）
+- `GET /stats`（请求统计看板，含 TTFT、TPS、Token 消耗、缓存命中率、官方 API 高峰价折算对比、近 24 小时趋势与按模型明细）
 
-管理端旧路由 `GET /api/admin/quota` 已删除，请改用 `/v1/dashboard/billing/credits`。
+管理端旧路由 `GET /api/admin/quota` 已删除，请改用 `/v1/dashboard/billing/credits`。在浏览器打开控制台顶部可直接切换至「请求统计」页面。所有 Qoder 上游业务错误码（如 104、110、112、406、429、80411 等）均转换为带具体描述与操作指引的友好中文提示。
 
 `GET /v1/models` 返回带 `cn/` 前缀的公开名（如 `cn/deepseek-v4-pro`、`cn/qwen3.7-max`）。不带前缀的公开名和内部 key（`dmodel` 等）仍可调用。最新版客户端显示的 DeepSeek-Flash 使用稳定公开 ID `cn/deepseek-v4.1-flash`（内部 `dfmodel`）；`cn/deepseek-v4-flash` 也作为兼容别名处理。
 

@@ -95,6 +95,14 @@ def create_app() -> FastAPI:
             return FileResponse(index_file)
         return {"message": "Qoder2OAPI Admin UI placeholder"}
 
+    @app.get("/stats")
+    @app.get("/metrics")
+    async def admin_stats():
+        stats_file = static_dir / "stats.html"
+        if stats_file.exists():
+            return FileResponse(stats_file)
+        return {"message": "Qoder2OAPI Stats UI placeholder"}
+
     return app
 
 
