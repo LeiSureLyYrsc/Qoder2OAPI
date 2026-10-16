@@ -970,6 +970,11 @@ async function loadAccounts() {
       const label = acc.email || acc.name || acc.user_id || acc.id;
       const enabledChecked = acc.enabled ? 'checked' : '';
       const checkinStatusHtml = formatCheckinStatus(acc);
+      const cooldownSec = Number(acc.cooldown_remaining || 0);
+      const cooldownHtml = cooldownSec > 0
+        ? `<span class="cooling-badge" data-cooling-account="${acc.id}" data-cooling-left="${cooldownSec}">冷却 ${cooldownSec.toFixed(0)}s</span>`
+        : `<span class="tag-badge tag-active" style="font-size:11px;">就绪</span>`;
+
       let flagsHtml = '';
       if (acc.skip_quota) {
         flagsHtml += `<button class="flag-chip active-warn" data-action="clear-flags" data-id="${acc.id}" title="点此恢复进入轮询">额度耗尽（点此恢复）</button>`;
@@ -989,7 +994,7 @@ async function loadAccounts() {
         ? `<div class="text-dim" style="font-size:11px;margin-top:4px;">${acc.last_error}</div>`
         : '';
       tr.innerHTML = `
-        <td>${kind}</td>
+        <td><span class="type-badge ${acc.kind === 'pat' ? 'type-badge-pat' : 'type-badge-cli'}">${kind}</span></td>
         <td>
           <div class="model-name">${label}</div>
           <div class="model-key">${acc.user_id || ''}</div>
@@ -997,6 +1002,7 @@ async function loadAccounts() {
         </td>
         <td class="tabular-nums account-remaining-cell">${remDisplay}</td>
         <td>${checkinStatusHtml}</td>
+        <td>${cooldownHtml}</td>
         <td class="tabular-nums">${formatDate(acc.expires_at)}</td>
         <td><input type="checkbox" data-action="toggle-enabled" data-id="${acc.id}" ${enabledChecked}></td>
         <td>${flagsHtml}</td>
@@ -1458,4 +1464,21 @@ function setupEventListeners() {
 window.addEventListener('DOMContentLoaded', () => {
   setupEventListeners();
   checkAuthAndLoad();
+
+  // 1-second ticker for cooling countdowns
+  setInterval(() => {
+    const badges = document.querySelectorAll('.cooling-badge[data-cooling-left]');
+    badges.forEach((b) => {
+      let left = parseFloat(b.getAttribute('data-cooling-left') || '0');
+      left = Math.max(0, left - 1);
+      b.setAttribute('data-cooling-left', left.toString());
+      if (left <= 0) {
+        b.className = 'tag-badge tag-active';
+        b.style.fontSize = '11px';
+        b.textContent = '就绪';
+      } else {
+        b.textContent = `冷却 ${left.toFixed(0)}s`;
+      }
+    });
+  }, 1000);
 });

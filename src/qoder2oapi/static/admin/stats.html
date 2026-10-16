@@ -43,7 +43,7 @@
 
   <!-- Main Dashboard View -->
   <div id="main-dashboard" class="app-container hidden">
-    <!-- Topbar Header -->
+    <!-- Topbar HUD Header -->
     <header class="topbar">
       <div class="brand-section">
         <div class="brand-icon">Q</div>
@@ -52,7 +52,7 @@
             Qoder2OAPI
             <span class="brand-version">v0.1.0</span>
           </h1>
-          <div class="brand-sub">请求统计与官方 API 价格折算分析</div>
+          <div class="brand-sub">高密操作中心 · 请求遥测与官方 API 价格折算</div>
         </div>
       </div>
 
@@ -60,6 +60,13 @@
         <a href="/" class="nav-link">控制台</a>
         <a href="/stats" class="nav-link active">请求统计</a>
       </nav>
+
+      <!-- HUD Endpoint Pill -->
+      <div class="hud-endpoint-pill">
+        <span class="dot dot-green pulse"></span>
+        <span>HUD:</span>
+        <code>http://127.0.0.1:8000/v1</code>
+      </div>
 
       <div class="topbar-actions">
         <button id="refresh-stats-btn" class="btn btn-primary" title="刷新统计数据">刷新数据</button>

@@ -229,14 +229,25 @@ function renderTrendsTable() {
     return;
   }
 
+  const maxTokens = Math.max(...trends.map(t => Number(t.total_tokens || 0)), 1);
+
   tbody.innerHTML = trends.map(row => {
+    const toks = Number(row.total_tokens || 0);
+    const pct = Math.min(100, Math.max(5, Math.round((toks / maxTokens) * 100)));
     return `
       <tr>
         <td class="tabular-nums" style="font-weight: 500;">${row.hour}</td>
         <td class="tabular-nums">${formatNumber(row.request_count)}</td>
         <td class="tabular-nums">${Number(row.avg_ttft).toFixed(0)} ms</td>
         <td class="tabular-nums">${Number(row.avg_tps).toFixed(1)} tok/s</td>
-        <td class="tabular-nums">${formatNumber(row.total_tokens)}</td>
+        <td>
+          <div class="sparkbar-cell">
+            <span class="tabular-nums" style="min-width: 60px;">${formatNumber(toks)}</span>
+            <div class="sparkbar-track">
+              <div class="sparkbar-fill" style="width: ${pct}%;"></div>
+            </div>
+          </div>
+        </td>
         <td class="tabular-nums" style="color: var(--accent-amber); font-weight: 600;">${formatCurrency(row.total_official_cost)}</td>
       </tr>
     `;

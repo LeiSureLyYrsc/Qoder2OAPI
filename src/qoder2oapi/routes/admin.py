@@ -134,7 +134,12 @@ async def admin_status() -> dict[str, Any]:
 @router.get("/accounts")
 async def list_accounts() -> dict[str, Any]:
     accounts = token_store.list_accounts()
-    return {"accounts": [acc.public_dump() for acc in accounts]}
+    acc_list = []
+    for acc in accounts:
+        dump = acc.public_dump()
+        dump["cooldown_remaining"] = round(pool.get_cooldown_remaining(acc.id), 1)
+        acc_list.append(dump)
+    return {"accounts": acc_list}
 
 
 @router.get("/accounts/export")

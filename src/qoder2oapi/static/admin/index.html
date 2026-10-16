@@ -8,45 +8,45 @@
 </head>
 <body>
 
-  <!-- Lock Screen View (Bootstrap / Enter Key) -->
+  <!-- Terminal Style Lock Screen View -->
   <div id="lock-screen" class="lock-screen hidden">
     <div class="lock-card">
       <div class="lock-brand">
         <div class="brand-icon">Q</div>
         <div class="brand-text">
           <h1>Qoder2OAPI 控制台</h1>
-          <div class="brand-sub">把 Qoder 中国区模型转成本地 OpenAI 接口</div>
+          <div class="brand-sub">高密操作中心 · 本地 OpenAI 兼容网关</div>
         </div>
       </div>
 
       <div>
-        <p style="margin-bottom: 12px; font-size: 13px; color: var(--text-muted);">
-          打开控制台需要本代理的密钥。把启动时打印的内容，或 <code>data/api_key.txt</code> 里的字符串贴到下面。
+        <p style="margin-bottom: 12px; font-size: 12.5px; color: var(--q-text-muted);">
+          访问控制中心需要本代理网关密钥。请输入启动时终端输出的字符串，或 <code>data/api_key.txt</code> 中的内容。
         </p>
         <div style="display: flex; flex-direction: column; gap: 8px;">
           <input 
             type="password" 
             id="lock-key-input" 
             class="input-control" 
-            placeholder="粘贴本代理密钥"
+            placeholder="粘贴本代理网关密钥 (Bearer Token)"
             autocomplete="off"
             spellcheck="false"
           >
           <div class="field-hint">
-            启动日志里也会打印一次。这是访问本机代理的密钥，不是 Qoder 登录密码，也不是官网个人令牌。
+            此密钥用于授权访问控制台及 <code>/v1</code> 接口，并非 Qoder 个人登录密码或 PAT 令牌。
           </div>
         </div>
       </div>
 
       <div style="display: flex; justify-content: flex-end;">
-        <button id="lock-save-btn" class="btn btn-primary" style="width: 100%;">进入控制台</button>
+        <button id="lock-save-btn" class="btn btn-primary" style="width: 100%;">接入控制台</button>
       </div>
     </div>
   </div>
 
-  <!-- Main Dashboard View -->
+  <!-- Main Command Center Dashboard View -->
   <div id="main-dashboard" class="app-container hidden">
-    <!-- Topbar Header -->
+    <!-- Topbar HUD Header -->
     <header class="topbar">
       <div class="brand-section">
         <div class="brand-icon">Q</div>
@@ -55,14 +55,23 @@
             Qoder2OAPI
             <span class="brand-version">v0.1.0</span>
           </h1>
-          <div class="brand-sub">把 Qoder 中国区模型转成本地 OpenAI 接口</div>
+          <div class="brand-sub">将 Qoder 中国区模型转为标准 OpenAI 协议</div>
         </div>
       </div>
 
+      <!-- Navigation Tabs -->
       <nav class="topbar-nav">
         <a href="/" class="nav-link active">控制台</a>
         <a href="/stats" class="nav-link">请求统计</a>
       </nav>
+
+      <!-- HUD Endpoint Pill -->
+      <div class="hud-endpoint-pill" title="点击复制 API 基地址">
+        <span class="dot dot-green pulse"></span>
+        <span>HUD:</span>
+        <code id="proxy-endpoint">http://127.0.0.1:8000/v1</code>
+        <button id="copy-endpoint-btn" class="btn btn-sm" style="padding: 1px 6px; font-size: 11px;">复制</button>
+      </div>
 
       <div class="topbar-actions">
         <!-- Auth Status & OAuth Login trigger -->
@@ -71,7 +80,7 @@
           <span id="auth-status-text">检测中…</span>
         </div>
 
-        <div id="polling-chip" class="status-badge hidden" style="border-color: var(--accent-primary); color: var(--accent-primary);">
+        <div id="polling-chip" class="status-badge hidden" style="border-color: var(--q-cyan); color: var(--q-cyan-bright);">
           <span class="dot dot-blue pulse"></span>
           <span id="polling-status-text">等待浏览器授权…</span>
         </div>
@@ -81,25 +90,28 @@
       </div>
     </header>
 
-    <!-- Section: 2 Columns: Quota & Service Info -->
+    <!-- Row 1: Quota & Harvesting vs Dispatch & Self-healing -->
     <div class="grid-2col">
-      <!-- Left Panel: Quotas (Credits) -->
+      <!-- Left Panel: Quota & Harvesting -->
       <section class="panel">
         <div class="panel-header">
           <div class="panel-title">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-            号池额度
+            额度池与自动收获
           </div>
-          <div id="quota-exceeded-chip" class="status-badge">
-            <span class="dot dot-green"></span> 正常
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <div id="quota-exceeded-chip" class="status-badge">
+              <span class="dot dot-green"></span> 正常
+            </div>
+            <button id="trigger-all-checkin-btn" class="btn btn-sm btn-emerald" title="立即为池内所有有效账号领取签到积分">全部签到</button>
           </div>
         </div>
 
         <div class="panel-body">
           <!-- Empty / Not logged in state -->
-          <div id="quota-empty-state" class="hidden" style="text-align: center; padding: 28px 12px; color: var(--text-dim);">
+          <div id="quota-empty-state" class="hidden" style="text-align: center; padding: 28px 12px; color: var(--q-text-dim);">
             <p>还没有加入任何 Qoder 账号。</p>
-            <p style="margin-top: 6px; font-size: 12px;">点右上角登录，或在账号池里粘贴官网个人令牌。</p>
+            <p style="margin-top: 6px; font-size: 12px;">点击右上角「登录 CLI」，或在下方账号池中粘贴官网个人令牌。</p>
           </div>
 
           <!-- Quota Active Groups -->
@@ -107,7 +119,7 @@
             <!-- 1. 套餐额度 (user_quota) -->
             <div class="quota-item">
               <div class="quota-meta-row">
-                <span class="quota-label" id="quota-user-label">套餐额度（合计）</span>
+                <span class="quota-label" id="quota-user-label">套餐额度 (通用合计)</span>
                 <span class="quota-nums tabular-nums" id="quota-user-nums">计算中…</span>
               </div>
               <div class="progress-track">
@@ -122,7 +134,7 @@
             <!-- 2. 加量包额度 (add_on_quota) -->
             <div class="quota-item">
               <div class="quota-meta-row">
-                <span class="quota-label" id="quota-addon-label">加量包（合计）</span>
+                <span class="quota-label" id="quota-addon-label">加量包 (通用合计)</span>
                 <span class="quota-nums tabular-nums" id="quota-addon-nums">计算中…</span>
               </div>
               <div class="progress-track">
@@ -137,7 +149,7 @@
             <!-- 3. 专属额度 (dedicated_resource_packages) -->
             <div id="quota-dedicated-block" class="quota-item hidden">
               <div class="quota-meta-row">
-                <span class="quota-label">专属额度</span>
+                <span class="quota-label">专属额度包</span>
                 <span class="quota-nums tabular-nums" id="quota-dedicated-nums"></span>
               </div>
               <div id="quota-dedicated-list" class="dedicated-packages-list"></div>
@@ -150,192 +162,172 @@
                 <div class="stat-val" id="quota-user-type">-</div>
               </div>
               <div class="stat-box">
-                <div class="stat-label">额度到期</div>
+                <div class="stat-label">额度到期时间</div>
                 <div class="stat-val tabular-nums" id="quota-expiry">-</div>
               </div>
             </div>
+
+            <!-- Account breakdown lines -->
             <div id="quota-account-lines" class="quota-account-lines"></div>
+
+            <!-- Checkin Scheduler Strip -->
+            <div class="strategy-item-full" style="margin-top: 4px;">
+              <div class="checkin-setting-header">
+                <label class="toggle-control" for="auto-checkin-toggle">
+                  <input type="checkbox" id="auto-checkin-toggle" class="toggle-checkbox" checked>
+                  <span class="toggle-slider"></span>
+                  <span class="toggle-label">每日自动签到领取积分</span>
+                </label>
+                <div class="checkin-time-box">
+                  <span class="checkin-time-label">北京时间 (UTC+8)</span>
+                  <input type="time" id="checkin-time-input" class="input-control checkin-time-input" value="10:05">
+                  <button id="save-checkin-time-btn" class="btn btn-sm">保存</button>
+                </div>
+              </div>
+              <div class="checkin-status-bar">
+                <div class="checkin-status-item">
+                  <span class="checkin-status-label">下次自动运行:</span>
+                  <span id="checkin-next-run" class="checkin-status-value tabular-nums">计算中…</span>
+                </div>
+                <div class="checkin-status-item">
+                  <span class="checkin-status-label">最近收获记录:</span>
+                  <span id="checkin-last-summary" class="checkin-status-value">暂无记录</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      <!-- Right Panel: Gateway Endpoint & Session Details -->
+      <!-- Right Panel: Dispatch & Self-healing & Gateway -->
       <section class="panel">
         <div class="panel-header">
           <div class="panel-title">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-            接入信息
+            调度与自愈策略
           </div>
           <div class="topbar-actions">
             <button id="change-key-btn" class="btn btn-sm">更换密钥</button>
-            <button id="rotate-key-btn" class="btn btn-sm">重新生成密钥</button>
+            <button id="rotate-key-btn" class="btn btn-sm">轮换密钥</button>
           </div>
         </div>
 
         <div class="panel-body">
           <div class="info-row">
-            <span class="info-label">接口地址</span>
-            <span class="info-value">
-              <span id="proxy-endpoint">http://127.0.0.1:8000/v1</span>
-              <button id="copy-endpoint-btn" class="btn btn-sm">复制</button>
-            </span>
-          </div>
-
-          <div class="info-row">
-            <span class="info-label">本代理密钥</span>
+            <span class="info-label">网关当前密钥</span>
             <span class="info-value">
               <span id="current-key-display">未设置</span>
             </span>
           </div>
 
           <div class="info-row">
-            <span class="info-label">账号</span>
+            <span class="info-label">号池可用容量</span>
             <span class="info-value" id="pool-summary">0 可用 / 共 0</span>
           </div>
 
-          <!-- Code Snippet -->
-          <div style="margin-top: 10px;">
-            <div style="display: flex; align-items: center; justify-content: space-between;">
-              <span class="field-hint">给 OpenAI 兼容客户端用的示例：</span>
+          <!-- Dispatch Mode & Self-healing Switches -->
+          <div class="skip-strategies-card" style="margin-top: 10px;">
+            <div class="dispatch-mode-block" style="border-top: none; padding-top: 0;">
+              <div class="dispatch-mode-head">
+                <span class="dispatch-mode-label">请求调度路由算法</span>
+                <div class="segmented" id="dispatch-mode-group" role="group" aria-label="调度策略">
+                  <button type="button" class="segment-btn active" data-mode="poll">轮询 (Round-Robin)</button>
+                  <button type="button" class="segment-btn" data-mode="failover">故障转移 (Failover)</button>
+                </div>
+              </div>
+              <div class="field-hint">
+                轮询：请求在健康账号间均衡轮转，避免单号超频。故障转移：优先绑定首选账号，发生异常时瞬时切换。
+              </div>
             </div>
-            <div class="code-preview">
-              <button id="copy-sample-code-btn" class="btn btn-sm copy-btn">复制调用示例</button>
-              <pre id="sample-code-block" style="white-space: pre-wrap; word-break: break-all; margin: 0;"></pre>
+
+            <div class="skip-strategies-grid" style="border-top: 1px solid var(--q-border-subtle); padding-top: 10px;">
+              <div class="strategy-item">
+                <label class="toggle-control" for="auto-mark-quota-toggle">
+                  <input type="checkbox" id="auto-mark-quota-toggle" class="toggle-checkbox">
+                  <span class="toggle-slider"></span>
+                  <span class="toggle-label">额度耗尽自动自愈跳过</span>
+                </label>
+                <div class="field-hint">
+                  通用积分耗尽后自动挂起该账号，若保留免费额度可关闭此项。
+                </div>
+              </div>
+
+              <div class="strategy-item">
+                <label class="toggle-control" for="auto-mark-auth-toggle">
+                  <input type="checkbox" id="auto-mark-auth-toggle" class="toggle-checkbox" checked>
+                  <span class="toggle-slider"></span>
+                  <span class="toggle-label">凭证失效自动熔断跳过</span>
+                </label>
+                <div class="field-hint">
+                  当账号出现 401/403 授权拒绝时自动隔离，防止无效调用打爆请求队列。
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- PAT Fast Input Row -->
+          <div style="margin-top: 14px;">
+            <div class="pat-add-row">
+              <input
+                type="password"
+                id="pat-input"
+                class="input-control"
+                placeholder="粘贴官网个人令牌（一般以 pt- 开头）"
+                autocomplete="off"
+                spellcheck="false"
+              >
+              <button id="add-pat-btn" class="btn btn-primary">快速纳管</button>
+            </div>
+            <div class="field-hint" style="margin-top: 6px;">
+              在 <a href="https://qoder.cn/account/integrations" target="_blank" rel="noopener">qoder.cn/account/integrations</a> 创建个人访问令牌。
+            </div>
+          </div>
+
+          <!-- JSON Export/Import -->
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--q-border-subtle);">
+            <span class="field-hint" style="margin: 0;">账号配置持久化 (data/accounts.json)</span>
+            <div style="display: flex; gap: 8px;">
+              <button id="export-accounts-btn" class="btn btn-sm" title="导出账号池配置文件（含凭证）">导出 JSON</button>
+              <button id="import-accounts-btn" class="btn btn-sm" title="从 JSON 文件导入账号">导入 JSON</button>
+              <input type="file" id="accounts-import-file" class="hidden" accept=".json,application/json">
             </div>
           </div>
         </div>
       </section>
     </div>
 
+    <!-- Section 2: High-Density Accounts Matrix Table -->
     <section class="panel">
       <div class="panel-header">
-        <div class="panel-title">账号池</div>
+        <div class="panel-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          账号池矩阵
+        </div>
         <div style="display: flex; align-items: center; gap: 8px;">
           <span id="accounts-count" class="brand-version">0 个账号</span>
-          <button id="export-accounts-btn" class="btn btn-sm" title="导出账号池配置文件（含凭证）">导出 JSON</button>
-          <button id="import-accounts-btn" class="btn btn-sm" title="从 JSON 文件导入账号">导入 JSON</button>
-          <input type="file" id="accounts-import-file" class="hidden" accept=".json,application/json">
         </div>
       </div>
-      <div class="panel-body">
-        <div class="pat-add-row">
-          <input
-            type="password"
-            id="pat-input"
-            class="input-control"
-            placeholder="粘贴官网个人令牌（一般以 pt- 开头）"
-            autocomplete="off"
-            spellcheck="false"
-          >
-          <button id="add-pat-btn" class="btn btn-primary">添加令牌</button>
-        </div>
-        <p class="field-hint" style="margin-top: 8px;">
-          在 <a href="https://qoder.cn/account/integrations" target="_blank" rel="noopener">qoder.cn/account/integrations</a> 创建个人令牌。这是 Qoder 官网令牌，不是上面的本代理密钥。
-        </p>
 
-        <!-- 自动跳过与每日签到策略 (Skip & Checkin Strategies) -->
-        <div class="skip-strategies-card">
-          <div class="skip-strategies-header">
-            <div class="skip-strategies-title">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="3"></circle>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-              </svg>
-              账号池策略与自动任务
-            </div>
-            <div class="checkin-quick-actions">
-              <button id="trigger-all-checkin-btn" class="btn btn-sm btn-primary" title="立即为池内所有有效账号领取签到 Credits">全部签到</button>
-            </div>
-          </div>
-          <div class="skip-strategies-grid">
-            <div class="strategy-item">
-              <label class="toggle-control" for="auto-mark-quota-toggle">
-                <input type="checkbox" id="auto-mark-quota-toggle" class="toggle-checkbox">
-                <span class="toggle-slider"></span>
-                <span class="toggle-label">额度耗尽后自动标记并跳过</span>
-              </label>
-              <div class="field-hint">
-                关闭后，即便通用额度归零也不会跳过该账号（适合仍有 Qwen 等专属免费额度的情况）。开启时通用额度耗尽将跳过。
-              </div>
-            </div>
-
-            <div class="strategy-item">
-              <label class="toggle-control" for="auto-mark-auth-toggle">
-                <input type="checkbox" id="auto-mark-auth-toggle" class="toggle-checkbox" checked>
-                <span class="toggle-slider"></span>
-                <span class="toggle-label">登录失效后自动标记并跳过</span>
-              </label>
-              <div class="field-hint">
-                当账号凭证过期或被拒绝时，自动标记并跳过，避免无效调用阻塞请求。
-              </div>
-            </div>
-
-            <div class="strategy-item strategy-item-full">
-              <div class="checkin-setting-header">
-                <label class="toggle-control" for="auto-checkin-toggle">
-                  <input type="checkbox" id="auto-checkin-toggle" class="toggle-checkbox" checked>
-                  <span class="toggle-slider"></span>
-                  <span class="toggle-label">每日自动签到领取 Credits</span>
-                </label>
-                <div class="checkin-time-box">
-                  <span class="checkin-time-label">执行时间 (UTC+8 / 北京时间)</span>
-                  <input type="time" id="checkin-time-input" class="input-control checkin-time-input" value="10:05">
-                  <button id="save-checkin-time-btn" class="btn btn-sm">保存时间</button>
-                </div>
-              </div>
-              <div class="checkin-status-bar">
-                <div class="checkin-status-item">
-                  <span class="checkin-status-label">下次运行:</span>
-                  <span id="checkin-next-run" class="checkin-status-value tabular-nums">计算中…</span>
-                </div>
-                <div class="checkin-status-item">
-                  <span class="checkin-status-label">最近结果:</span>
-                  <span id="checkin-last-summary" class="checkin-status-value">暂无记录</span>
-                </div>
-              </div>
-              <div class="field-hint">
-                每日定时为池内所有账号自动执行签到领取积分奖励。支持单独手动签到或立即全部签到。
-              </div>
-            </div>
-          </div>
-
-          <div class="dispatch-mode-block">
-            <div class="dispatch-mode-head">
-              <span class="dispatch-mode-label">调度策略</span>
-              <div class="segmented" id="dispatch-mode-group" role="group" aria-label="调度策略">
-                <button type="button" class="segment-btn" data-mode="poll">轮询</button>
-                <button type="button" class="segment-btn" data-mode="failover">故障转移</button>
-              </div>
-            </div>
-            <div class="field-hint">
-              轮询：每个请求在可用账号间轮转，分散负载（默认）。故障转移：粘住当前账号，只有失败时才切换。两种模式都不会使用被标记的账号。
-            </div>
-          </div>
-        </div>
-
-        <p class="field-hint" style="margin-top: 6px;">
-          自动跳过遵循上述两个策略开关；通用积分耗尽后 Qwen 等专属额度可能仍可使用。点标记或「清除标记」后重新进入轮询。账号保存在项目 <code>data/accounts.json</code>。导出文件含登录凭证，不要发到公开地方。
-        </p>
-      </div>
       <div class="panel-body" style="padding: 0;">
-        <div class="table-wrapper">
+        <div class="table-wrapper" style="border-top: none;">
           <table class="data-table">
             <thead>
               <tr>
-                <th>类型</th>
-                <th>账号</th>
-                <th>剩余积分</th>
-                <th>签到状态</th>
-                <th>登录到期</th>
-                <th>启用</th>
-                <th>标记</th>
-                <th>操作</th>
+                <th style="min-width: 90px;">类型</th>
+                <th style="min-width: 220px;">账号标识 / 状态</th>
+                <th style="min-width: 100px;">剩余积分</th>
+                <th style="min-width: 110px;">每日签到</th>
+                <th style="min-width: 100px;">429 冷却</th>
+                <th style="min-width: 150px;">凭证到期</th>
+                <th style="min-width: 60px;">启用</th>
+                <th style="min-width: 140px;">自愈标记</th>
+                <th style="min-width: 180px;">操作</th>
               </tr>
             </thead>
             <tbody id="accounts-table-body">
               <tr>
-                <td colspan="8" style="text-align: center; padding: 24px; color: var(--text-dim);">
-                  还没有账号。用右上角登录 CLI，或粘贴官网个人令牌。
+                <td colspan="9" style="text-align: center; padding: 28px; color: var(--q-text-dim);">
+                  还没有账号。点击右上角登录 CLI，或在上方粘贴官网个人访问令牌。
                 </td>
               </tr>
             </tbody>
@@ -344,12 +336,12 @@
       </div>
     </section>
 
-    <!-- Section: Model Catalog Table -->
+    <!-- Section 3: Model Catalog Table & Live cURL Snippet -->
     <section class="panel">
       <div class="panel-header">
         <div class="panel-title">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
-          模型目录
+          模型目录与路由拓扑
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
           <span id="models-count" class="brand-version">0 个模型</span>
@@ -357,22 +349,22 @@
       </div>
 
       <div class="panel-body" style="padding: 0;">
-        <div class="table-wrapper">
+        <div class="table-wrapper" style="border-top: none;">
           <table class="data-table">
             <thead>
               <tr>
-                <th style="min-width: 200px;">对外名称</th>
-                <th style="min-width: 140px;">思考强度</th>
-                <th style="min-width: 90px;">上下文</th>
-                <th style="min-width: 90px;">最大输出</th>
-                <th style="min-width: 110px;">能力</th>
-                <th style="min-width: 150px;">调度模式</th>
+                <th style="min-width: 200px;">对外模型 ID</th>
+                <th style="min-width: 150px;">思考强度 (Reasoning)</th>
+                <th style="min-width: 100px;">最大上下文</th>
+                <th style="min-width: 100px;">最大输出</th>
+                <th style="min-width: 120px;">模型能力</th>
+                <th style="min-width: 150px;">独立调度策略</th>
               </tr>
             </thead>
             <tbody id="models-table-body">
               <tr>
-                <td colspan="6" style="text-align: center; padding: 24px; color: var(--text-dim);">
-                  正在加载模型列表…
+                <td colspan="6" style="text-align: center; padding: 28px; color: var(--q-text-dim);">
+                  正在加载模型目录与调度拓扑…
                 </td>
               </tr>
             </tbody>
@@ -380,14 +372,23 @@
         </div>
       </div>
 
-      <div style="padding: 10px 16px; background: var(--bg-card-subtle); border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-dim);">
-        调用时默认用每个模型的最大思考和最大上下文。请求里写 <code>reasoning_effort</code> 或 <code>context_length</code> 可以改小。对外模型名带 <code>cn/</code> 前缀，如 <code>cn/deepseek-v4-pro</code>。
+      <!-- Live cURL Code Sample Box -->
+      <div style="padding: 14px 16px; background: var(--q-bg-surface-1); border-top: 1px solid var(--q-border);">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+          <span class="field-hint" style="margin: 0; font-weight: 500; color: var(--q-text-muted);">
+            OpenAI 兼容客户端快速调用示例 (cURL)：
+          </span>
+          <button id="copy-sample-code-btn" class="btn btn-sm copy-btn">复制调用命令</button>
+        </div>
+        <div class="code-preview" style="margin: 0;">
+          <pre id="sample-code-block" style="white-space: pre-wrap; word-break: break-all; margin: 0; font-family: var(--font-mono);"></pre>
+        </div>
       </div>
     </section>
 
     <!-- Footer Note -->
     <footer class="footer-note">
-      本机代理 · 直连 Qoder 中国区，不经过官方命令行
+      Qoder2OAPI · 高密操作台 · 直连 Qoder 中国区核心网关，不依赖官方 CLI 二进制执行
     </footer>
   </div>
 
@@ -395,21 +396,21 @@
   <div id="key-modal" class="modal-overlay hidden">
     <div class="modal-dialog">
       <div class="modal-header">
-        <h2>更换本代理密钥</h2>
+        <h2>更换本代理网关密钥</h2>
       </div>
       <div class="modal-body">
-        <p class="field-hint">只改浏览器里保存的本代理密钥，用来打开控制台和调用 <code>/v1</code>。不会改 Qoder 账号。</p>
+        <p class="field-hint">更新浏览器本地保存的本代理密钥，用于鉴权控制台及 <code>/v1</code> 请求，不会影响后端账号凭据。</p>
         <input 
           type="text" 
           id="key-modal-input" 
           class="input-control" 
-          placeholder="粘贴本代理密钥"
+          placeholder="粘贴网关 API 密钥"
           autocomplete="off"
         >
       </div>
       <div class="modal-footer">
         <button id="key-modal-cancel" class="btn">取消</button>
-        <button id="key-modal-save" class="btn btn-primary">保存</button>
+        <button id="key-modal-save" class="btn btn-primary">保存生效</button>
       </div>
     </div>
   </div>
@@ -418,38 +419,39 @@
   <div id="rotate-modal" class="modal-overlay hidden">
     <div class="modal-dialog">
       <div class="modal-header">
-        <h2>已生成新的本代理密钥</h2>
+        <h2>已重新生成网关密钥</h2>
       </div>
       <div class="modal-body">
         <p class="field-hint">
-          新密钥已写入 <code>data/api_key.txt</code>，旧密钥立刻失效。请复制保存，并更新所有客户端：
+          新密钥已保存至 <code>data/api_key.txt</code>，旧密钥已永久作废。请妥善保存并更新所有接入客户端：
         </p>
         <input 
           type="text" 
           id="rotated-key-value" 
           class="input-control" 
           readonly 
-          style="background: #090b0e; color: #38bdf8; font-weight: 600;"
+          style="background: #050608; color: var(--q-cyan-bright); font-weight: 600; font-family: var(--font-mono);"
         >
       </div>
       <div class="modal-footer">
-        <button id="copy-rotated-key-btn" class="btn btn-primary">复制</button>
-        <button id="rotate-modal-close" class="btn">关闭</button>
+        <button id="copy-rotated-key-btn" class="btn btn-primary">复制新密钥</button>
+        <button id="rotate-modal-close" class="btn">完成</button>
       </div>
     </div>
   </div>
 
+  <!-- Modal: Confirmation Dialog -->
   <div id="confirm-modal" class="modal-overlay hidden">
     <div class="modal-dialog">
       <div class="modal-header">
-        <h2 id="confirm-title">确认</h2>
+        <h2 id="confirm-title">确认操作</h2>
       </div>
       <div class="modal-body">
-        <p class="field-hint" id="confirm-message"></p>
+        <p class="field-hint" id="confirm-message" style="color: var(--q-text-main);"></p>
       </div>
       <div class="modal-footer">
         <button id="confirm-cancel" class="btn">取消</button>
-        <button id="confirm-ok" class="btn btn-danger">确认</button>
+        <button id="confirm-ok" class="btn btn-danger">确认执行</button>
       </div>
     </div>
   </div>
@@ -458,20 +460,22 @@
   <div id="import-modal" class="modal-overlay hidden">
     <div class="modal-dialog">
       <div class="modal-header">
-        <h2>导入账号池</h2>
+        <h2>导入账号池配置文件</h2>
       </div>
       <div class="modal-body">
-        <p id="import-modal-summary" class="field-hint" style="color: var(--text-main); font-weight: 500;"></p>
+        <p id="import-modal-summary" class="field-hint" style="color: var(--q-text-main); font-weight: 600;"></p>
         <p class="field-hint">
-          请选择导入方式：<br>
-          • <strong>合并</strong>：同账号覆盖，新账号追加，保留池内其他账号<br>
-          • <strong>替换</strong>：清空当前账号池，只保留导入文件中的账号
+          请选择账号池导入策略：<br>
+          • <strong>合并导入</strong>：同账号自动更新凭据，新账号追加至池底，保留当前其他有效账号。<br>
+          • <strong>清空替换</strong>：先清空当前账号池，仅保留导入文件内的账号。
         </p>
       </div>
       <div class="modal-footer import-modal-footer">
         <button id="import-cancel-btn" class="btn">取消</button>
-        <button id="import-merge-btn" class="btn btn-primary">合并导入</button>
-        <button id="import-replace-btn" class="btn btn-danger">清空并替换</button>
+        <div style="display: flex; gap: 8px;">
+          <button id="import-merge-btn" class="btn btn-primary">合并导入</button>
+          <button id="import-replace-btn" class="btn btn-danger">清空并替换</button>
+        </div>
       </div>
     </div>
   </div>
