@@ -61,9 +61,20 @@ def test_calculate_official_cost(temp_metrics: MetricsManager):
     )
     assert cost_prefixed == cost
 
-    # Free model test (qwen3.8-flash)
-    cost_free = temp_metrics.calculate_official_cost(
+    # Qwen3.8-Flash non-zero official pricing test
+    # prompt: 0.5/1M, cached: 0.1/1M, completion: 1.5/1M
+    cost_qwen_flash = temp_metrics.calculate_official_cost(
         "qwen3.8-flash",
+        prompt_tokens=5000,
+        cached_tokens=1000,
+        completion_tokens=5000,
+    )
+    # (4000 * 0.5 + 1000 * 0.1 + 5000 * 1.5) / 1,000,000 = (2000 + 100 + 7500) / 1,000,000 = 0.0096 RMB
+    assert abs(cost_qwen_flash - 0.0096) < 1e-6
+
+    # Free model test: lite remains 0.0
+    cost_free = temp_metrics.calculate_official_cost(
+        "lite",
         prompt_tokens=5000,
         completion_tokens=5000,
     )

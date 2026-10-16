@@ -58,17 +58,17 @@ MODEL_PRICING_SNAPSHOT: list[dict[str, Any]] = [
     {
         "model_key": "qfmodel",
         "model_name": "qwen3.8-flash",
-        "prompt_rate": 0.0,
-        "cached_rate": 0.0,
-        "completion_rate": 0.0,
+        "prompt_rate": 0.5,
+        "cached_rate": 0.1,
+        "completion_rate": 1.5,
         "last_fetched_at": SNAPSHOT_LAST_FETCHED_AT,
     },
     {
         "model_key": "q37fmodel",
         "model_name": "qwen3.7-flash",
-        "prompt_rate": 0.0,
-        "cached_rate": 0.0,
-        "completion_rate": 0.0,
+        "prompt_rate": 0.3,
+        "cached_rate": 0.075,
+        "completion_rate": 0.6,
         "last_fetched_at": SNAPSHOT_LAST_FETCHED_AT,
     },
     {
@@ -82,9 +82,9 @@ MODEL_PRICING_SNAPSHOT: list[dict[str, Any]] = [
     {
         "model_key": "gfmodel",
         "model_name": "glm-5.3-flash",
-        "prompt_rate": 0.0,
-        "cached_rate": 0.0,
-        "completion_rate": 0.0,
+        "prompt_rate": 0.1,
+        "cached_rate": 0.025,
+        "completion_rate": 0.2,
         "last_fetched_at": SNAPSHOT_LAST_FETCHED_AT,
     },
     {
