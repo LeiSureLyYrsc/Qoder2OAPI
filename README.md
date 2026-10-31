@@ -20,8 +20,10 @@ uv run qoder2oapi
 
 两种登录方式：
 
-- **CLI OAuth**：浏览器完成设备流授权。聊天走 CLI 身份；过期后需要重新登录。
+- **CLI OAuth**：浏览器完成设备流授权。聊天走 CLI 身份。access token 剩余不足 5 分钟，或上游返回 401 时，用本代理自己保存的 refresh token 调一次 `POST /api/v1/deviceToken/refresh`（与 qodercli 1.1.81 相同）。成功才替换 refresh token；失败不重试，需要重新登录。
 - **官网 PAT**：兑换成短命 job token；过期后自动 `jobToken/refresh`，失败再重新兑换。
+
+本代理只轮换自己登录得到的 refresh token，每个账号串行刷新一次。不要把官方 CLI 正在使用的同一份 refresh token 导入号池：两边同时刷新会触发重放检测，整条登录态一起失效。
 
 PAT 不是本代理的 API Key。控制台可分别配置“额度耗尽”和“登录失效”的自动标记策略；额度自动标记默认关闭，避免通用积分归零时误跳过仍有 Qwen 专属积分的账号。点标记或「清除标记」后可重新进入轮询。设置保存在 `data/settings.json`，号池明文保存在 `data/accounts.json`，控制台可导出/导入（合并或整池替换）。导出文件含登录凭证，不要发到公开地方。账号剩余积分含可用专属资源包；`/v1/dashboard/billing/credits` 返回号池通用、加量、专属额度与每个账号的剩余。
 

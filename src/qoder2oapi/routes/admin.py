@@ -206,7 +206,7 @@ async def refresh_account_token(account_id: str) -> dict[str, Any]:
     if not acc:
         raise HTTPException(status_code=404, detail="Account not found")
     if not needs_refresh(acc):
-        raise HTTPException(status_code=400, detail="Only PAT accounts can be manually refreshed")
+        raise HTTPException(status_code=400, detail="Account has no refresh token")
 
     acc.expires_at = 0
     refreshed = await ensure_fresh(acc, force=True)

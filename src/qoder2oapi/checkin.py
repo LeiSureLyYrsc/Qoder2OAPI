@@ -7,7 +7,7 @@ from qoder2oapi.http import get_http_client
 from qoder2oapi.models import AccountRecord
 from qoder2oapi.pool import pool
 from qoder2oapi.quota import fetch_quota_for_account
-from qoder2oapi.refresh import ensure_fresh
+from qoder2oapi.refresh import ensure_fresh, needs_refresh
 from qoder2oapi.runtime_settings import runtime_settings, validate_checkin_time
 from qoder2oapi.token_store import token_store
 
@@ -101,13 +101,12 @@ async def checkin_account(account: AccountRecord) -> dict[str, Any]:
     """
     Execute checkin for a single account.
     Authenticates using Bearer access_token with simulated desktop headers.
-    If PAT account, calls ensure_fresh.
-    If 401 occurs, for PAT forces refresh and retries.
-    For OAuth or failed retry, marks auth via pool.mark_skip_auth (consistent with quota).
+    Calls ensure_fresh for accounts that can renew (PAT, or OAuth with a refresh token).
+    On 401, forces one refresh and retries. A failed retry marks auth via pool.mark_skip_auth.
     """
     now_ts = int(datetime.now(SHANGHAI_TZ).timestamp() * 1000)
 
-    if account.kind == "pat":
+    if needs_refresh(account):
         account = await ensure_fresh(account)
         if account.skip_auth:
             res = {
@@ -124,7 +123,7 @@ async def checkin_account(account: AccountRecord) -> dict[str, Any]:
     try:
         resp = await client.get(CAMPAIGNS_URL, headers=headers)
         if resp.status_code == 401:
-            if account.kind == "pat":
+            if needs_refresh(account):
                 account = await ensure_fresh(account, force=True)
                 if not account.skip_auth:
                     headers = build_checkin_headers(account)
@@ -169,7 +168,7 @@ async def checkin_account(account: AccountRecord) -> dict[str, Any]:
             cid = camp.get("campaignId") or camp.get("id")
             claim_url = CAMPAIGN_CLAIM_URL_TEMPLATE.format(campaign_id=cid)
             claim_resp = await client.post(claim_url, headers=headers, json={})
-            if claim_resp.status_code == 401 and account.kind == "pat":
+            if claim_resp.status_code == 401 and needs_refresh(account):
                 account = await ensure_fresh(account, force=True)
                 if not account.skip_auth:
                     headers = build_checkin_headers(account)

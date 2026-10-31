@@ -4,8 +4,10 @@ import uuid
 from typing import Any
 from qoder2oapi.constants import (
     CLIENT_CLI,
+    DEVICE_REFRESH,
     JOB_TOKEN_EXCHANGE,
     JOB_TOKEN_REFRESH,
+    MACHINE_TYPE,
 )
 from qoder2oapi.http import get_http_client
 from qoder2oapi.identity import normalize_client
@@ -22,6 +24,13 @@ PAT_HEADERS = {
     "Cosy-ClientType": "5",
 }
 
+# Same identity client as deviceToken/poll: the refresh token is the credential.
+OAUTH_REFRESH_HEADERS = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "User-Agent": "Go-http-client/2.0",
+}
+
 _refresh_locks: dict[str, asyncio.Lock] = {}
 
 
@@ -32,6 +41,8 @@ def _extract_access_token(data: dict[str, Any]) -> str:
         or data.get("job_token")
         or data.get("jobToken")
         or data.get("jt")
+        or data.get("device_token")
+        or data.get("deviceToken")
         or ""
     )
 
@@ -86,7 +97,11 @@ async def exchange_pat(pat: str) -> AccountRecord:
 
 
 def needs_refresh(account: AccountRecord) -> bool:
-    return account.kind == "pat"
+    if account.kind == "pat":
+        return True
+    # OAuth sessions minted by this proxy. Accounts without a refresh token
+    # cannot be renewed and still require a new device login.
+    return account.kind == "oauth" and bool(account.refresh_token)
 
 
 async def ensure_fresh(account: AccountRecord, force: bool = False) -> AccountRecord:
@@ -134,6 +149,10 @@ async def _ensure_fresh_locked(account: AccountRecord, force: bool = False) -> A
         return account
 
     client = get_http_client()
+
+    if account.kind == "oauth":
+        return await _refresh_oauth_locked(client, account)
+
     refreshed_ok = False
     new_access_token = ""
     new_refresh_token = ""
@@ -230,5 +249,63 @@ async def _ensure_fresh_locked(account: AccountRecord, force: bool = False) -> A
     account.last_error = "Failed to refresh or exchange PAT"
     if runtime_settings.auto_mark_auth:
         account.skip_auth = True
+    token_store.upsert(account)
+    return account
+
+
+def _device_refresh_body(account: AccountRecord) -> dict[str, str]:
+    body = {
+        "refresh_token": account.refresh_token,
+        "machine_type": MACHINE_TYPE,
+    }
+    if account.machine_id:
+        body["machine_id"] = account.machine_id
+    return body
+
+
+async def _refresh_oauth_locked(client: Any, account: AccountRecord) -> AccountRecord:
+    """Renew a device-login session the way qodercli 1.1.81 does.
+
+    One attempt, then stop. A second try with the same refresh token is what
+    trips reuse detection and kills the whole token family.
+    """
+    if not account.refresh_token:
+        return _mark_auth_failed(account, "OAuth account has no refresh token")
+
+    try:
+        resp = await client.post(
+            DEVICE_REFRESH,
+            headers=OAUTH_REFRESH_HEADERS,
+            json=_device_refresh_body(account),
+        )
+    except Exception as exc:
+        return _mark_auth_failed(account, f"OAuth token refresh failed: {exc}")
+
+    if resp.status_code != 200:
+        return _mark_auth_failed(account, f"OAuth token refresh failed: HTTP {resp.status_code}")
+
+    try:
+        data = resp.json()
+    except Exception as exc:
+        return _mark_auth_failed(account, f"OAuth token refresh failed: {exc}")
+
+    token_data = data.get("data") if isinstance(data.get("data"), dict) else data
+    if not isinstance(token_data, dict):
+        return _mark_auth_failed(account, "OAuth token refresh failed: empty response")
+
+    new_access_token = _extract_access_token(token_data)
+    if not new_access_token:
+        return _mark_auth_failed(account, "OAuth token refresh failed: no token in response")
+
+    new_refresh_token = str(token_data.get("refresh_token") or token_data.get("refreshToken") or "")
+    account.access_token = new_access_token
+    # Absent refresh token means "unchanged", matching the CLI parser.
+    # Never write the old value back just to have a field.
+    if new_refresh_token:
+        account.refresh_token = new_refresh_token
+    account.expires_at = _parse_expiry(token_data)
+    account.client = normalize_client(account.client)
+    account.skip_auth = False
+    account.last_error = ""
     token_store.upsert(account)
     return account

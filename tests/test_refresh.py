@@ -6,7 +6,7 @@ import qoder2oapi.token_store as ts_mod
 
 
 @pytest.mark.asyncio
-async def test_kind_oauth_ensure_fresh_does_not_http(monkeypatch):
+async def test_oauth_without_refresh_token_does_not_http(monkeypatch):
     called = False
 
     class MockClient:
@@ -22,14 +22,166 @@ async def test_kind_oauth_ensure_fresh_does_not_http(monkeypatch):
         id="acc-oauth",
         kind="oauth",
         access_token="tok",
-        refresh_token="ref",
         user_id="u1",
         machine_id="m1",
-        expires_at=0,  # even if expired, oauth shouldn't refresh
+        expires_at=0,
     )
     res = await ensure_fresh(acc)
     assert not called
     assert res.access_token == "tok"
+
+
+@pytest.mark.asyncio
+async def test_oauth_not_expired_skips_http(monkeypatch):
+    called = False
+
+    class MockClient:
+        async def post(self, *args, **kwargs):
+            nonlocal called
+            called = True
+            raise RuntimeError("Should not be called")
+
+    from qoder2oapi import refresh
+
+    monkeypatch.setattr(refresh, "get_http_client", lambda: MockClient())
+    acc = AccountRecord(
+        id="acc-oauth-fresh",
+        kind="oauth",
+        access_token="tok",
+        refresh_token="rt-still-valid",
+        user_id="u1",
+        machine_id="m1",
+        expires_at=int(time.time() * 1000) + 10 * 60 * 1000,
+    )
+    res = await ensure_fresh(acc)
+    assert called is False
+    assert res.refresh_token == "rt-still-valid"
+
+
+@pytest.mark.asyncio
+async def test_oauth_refresh_posts_device_token_once(monkeypatch):
+    calls = []
+
+    class MockResp:
+        status_code = 200
+
+        def json(self):
+            return {
+                "data": {
+                    "token": "dt-new",
+                    "refresh_token": "rt-rotated",
+                    "expires_in": 3600,
+                }
+            }
+
+    class MockClient:
+        async def post(self, url, *args, **kwargs):
+            calls.append((str(url), kwargs.get("json"), kwargs.get("headers")))
+            return MockResp()
+
+    from qoder2oapi import refresh
+
+    monkeypatch.setattr(refresh, "get_http_client", lambda: MockClient())
+    acc = AccountRecord(
+        id="acc-oauth-refresh",
+        kind="oauth",
+        access_token="dt-old",
+        refresh_token="rt-old",
+        user_id="u1",
+        machine_id="machine-1",
+        expires_at=0,
+        skip_auth=True,
+        last_error="expired",
+    )
+    ts_mod.token_store.upsert(acc)
+
+    res = await ensure_fresh(acc)
+    assert len(calls) == 1
+    url, body, headers = calls[0]
+    assert url.endswith("/api/v1/deviceToken/refresh")
+    assert body == {
+        "refresh_token": "rt-old",
+        "machine_type": "5",
+        "machine_id": "machine-1",
+    }
+    assert headers["User-Agent"] == "Go-http-client/2.0"
+    assert "Authorization" not in headers
+    assert res.access_token == "dt-new"
+    assert res.refresh_token == "rt-rotated"
+    assert res.expires_at > int(time.time() * 1000) + 3_000_000
+    assert res.skip_auth is False
+    assert res.last_error == ""
+    saved = ts_mod.token_store.get(acc.id)
+    assert saved is not None
+    assert saved.refresh_token == "rt-rotated"
+
+
+@pytest.mark.asyncio
+async def test_oauth_refresh_keeps_old_refresh_token_when_absent(monkeypatch):
+    class MockResp:
+        status_code = 200
+
+        def json(self):
+            return {"token": "dt-new", "expires_in": 3600}
+
+    class MockClient:
+        async def post(self, *args, **kwargs):
+            return MockResp()
+
+    from qoder2oapi import refresh
+
+    monkeypatch.setattr(refresh, "get_http_client", lambda: MockClient())
+    acc = AccountRecord(
+        id="acc-oauth-keep-rt",
+        kind="oauth",
+        access_token="dt-old",
+        refresh_token="rt-keep",
+        user_id="u1",
+        machine_id="m1",
+        expires_at=0,
+    )
+    res = await ensure_fresh(acc)
+    assert res.access_token == "dt-new"
+    assert res.refresh_token == "rt-keep"
+
+
+@pytest.mark.asyncio
+async def test_oauth_refresh_failure_is_single_attempt(monkeypatch):
+    calls = 0
+
+    class MockResp:
+        status_code = 401
+        text = "TOKEN_EXPIRE"
+
+        def json(self):
+            return {"code": "TOKEN_EXPIRE"}
+
+    class MockClient:
+        async def post(self, *args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return MockResp()
+
+    from qoder2oapi import refresh
+
+    monkeypatch.setattr(refresh, "get_http_client", lambda: MockClient())
+    acc = AccountRecord(
+        id="acc-oauth-fail",
+        kind="oauth",
+        access_token="dt-old",
+        refresh_token="rt-dead",
+        user_id="u1",
+        machine_id="m1",
+        expires_at=0,
+    )
+    ts_mod.token_store.upsert(acc)
+
+    res = await ensure_fresh(acc, force=True)
+    assert calls == 1
+    assert res.access_token == "dt-old"
+    assert res.refresh_token == "rt-dead"
+    assert res.skip_auth is True
+    assert "HTTP 401" in res.last_error
 
 
 @pytest.mark.asyncio
@@ -378,13 +530,19 @@ async def test_pat_refresh_fail_with_auto_mark_auth_false(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_desktop_oauth_not_refreshed_via_device_token(monkeypatch):
+async def test_desktop_oauth_uses_device_token_refresh(monkeypatch):
     posted = []
+
+    class MockResp:
+        status_code = 200
+
+        def json(self):
+            return {"device_token": "dt-new", "refresh_token": "rt-new", "expires_in": 3600}
 
     class MockClient:
         async def post(self, url, *args, **kwargs):
             posted.append(str(url))
-            raise RuntimeError("Should not be called")
+            return MockResp()
 
     from qoder2oapi import refresh
 
@@ -401,6 +559,7 @@ async def test_desktop_oauth_not_refreshed_via_device_token(monkeypatch):
     )
     ts_mod.token_store.upsert(acc)
     res = await ensure_fresh(acc, force=True)
-    assert posted == []
-    assert res.access_token == "dt-old"
+    assert len(posted) == 1
+    assert posted[0].endswith("/api/v1/deviceToken/refresh")
+    assert res.access_token == "dt-new"
     assert res.client == "cli"
